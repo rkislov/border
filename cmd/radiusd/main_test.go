@@ -87,7 +87,9 @@ func TestServePasswordAndMTLS(t *testing.T) {
 			jar, _ := cookiejar.New(nil)
 			transport := &http.Transport{TLSClientConfig: config}
 			defer transport.CloseIdleConnections()
-			client := &http.Client{Transport: transport, Jar: jar, Timeout: time.Second}
+			// Race instrumentation and concurrent password hashing on shared CI runners
+			// can exceed one second; this is a correctness test, not a latency benchmark.
+			client := &http.Client{Transport: transport, Jar: jar, Timeout: 10 * time.Second}
 			url := "https://" + addr
 			var response *http.Response
 			for i := 0; i < 50; i++ {
