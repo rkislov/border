@@ -19,7 +19,7 @@ function table(target, heads, rows, kind) {
 async function load() {
  try { const r = await fetch('/api/state'); if (!r.ok) throw new Error('Не удалось загрузить данные: ' + r.status); state = await r.json();
   $('#stat-nas').textContent = state.nas.length; $('#stat-vlans').textContent = state.vlans.length; $('#stat-devices').textContent = state.devices.filter(d => d.Active).length; $('#stat-sessions').textContent = state.sessions.filter(s => s.Status === 'active').length;
-  table('#nas-list', ['IP-адрес', 'Имя', 'CoA порт'], state.nas.map(n => [n.Address, n.Name, n.CoAPort]), 'nas');
+  table('#nas-list', ['IP-адрес', 'Имя', 'Словарь', 'Режим', 'CoA порт', 'SMS-портал'], state.nas.map(n => [n.Address, n.Name, n.Dictionary, n.Mode, n.CoAPort, n.PortalEnabled ? 'Разрешён' : 'Выключен']), 'nas');
   table('#vlans-list', ['VLAN', 'Название'], state.vlans.map(v => [v.ID, v.Name]), 'vlans');
   table('#devices-list', ['MAC', 'VLAN', 'Статус', 'Тип', 'Комментарий'], state.devices.map(d => [d.MAC, d.VLAN || 'NAS default', d.Active ? 'Активно' : 'Запрещено', d.Voice ? 'Voice' : 'Data', d.Comment]), 'devices');
   table('#sessions-list', ['NAS', 'Сессия', 'MAC', 'Пользователь', 'Статус', 'Обновлено'], state.sessions.map(s => [s.NAS, s.ID, s.MAC, s.Username, s.Status, date(s.Updated)]));
@@ -27,12 +27,15 @@ async function load() {
   document.querySelectorAll('.vlan-select').forEach(s => { const value = s.value; while(s.options.length > 1) s.remove(1); state.vlans.forEach(v => {const o = new Option(v.ID + ' · ' + v.Name, v.ID); s.add(o);}); s.value = value; });
   $('#session-select').replaceChildren();state.sessions.filter(s=>s.Status==='active').forEach((s,i)=>$('#session-select').add(new Option(s.NAS+' · '+s.ID+' · '+s.Username,JSON.stringify({NAS:s.NAS,ID:s.ID,MAC:s.MAC,Username:s.Username,Updated:s.Updated}))));
   $('#settings-form').elements.Isolation.value = state.isolation;
+  await loadGuest();
+ await loadProfiles();
+ await loadFingerprints();
   const eapResponse=await fetch('/api/eap');if(eapResponse.ok){const ep=await eapResponse.json();$('#eap-form').elements.Enabled.checked=ep.Enabled;$('#eap-form').elements.VLAN.value=ep.VLAN;$('#eap-status').textContent=ep.Available?'Используются управляемые CA из раздела сертификатов.':'Для EAP-TLS задайте BORDER_MASTER_KEY и перезапустите radiusd.';}
  } catch(e) { notice(e.message, true); }
 }
 async function mutate(url, data) { try { const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify(data) }); if (!r.ok) throw new Error(await r.text()); notice('Изменения сохранены'); await load(); return true; } catch(e) { notice(e.message, true); return false; } }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => { document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== b.dataset.view); document.querySelectorAll('nav button').forEach(n => n.classList.toggle('selected', n === b)); $('#breadcrumb').textContent = b.childNodes[0].textContent.trim().toUpperCase(); });
-for (const kind of ['nas', 'devices', 'vlans', 'settings']) { const form = $('#' + kind + '-form'); form.onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(form)); for (const k of ['VLAN', 'ID', 'Isolation', 'CoAPort']) if (k in data) data[k] = Number(data[k]); if (kind === 'devices') {data.Active = form.elements.Active.checked; data.Voice = form.elements.Voice.checked;}
+for (const kind of ['nas', 'devices', 'vlans', 'settings']) { const form = $('#' + kind + '-form'); form.onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(form)); for (const k of ['VLAN', 'ID', 'Isolation', 'CoAPort']) if (k in data) data[k] = Number(data[k]); if (kind === 'nas') data.PortalEnabled = form.elements.PortalEnabled.checked; if (kind === 'devices') {data.Active = form.elements.Active.checked; data.Voice = form.elements.Voice.checked;}
  if (await mutate('/api/' + kind, data)) {if(kind === 'nas') form.elements.Secret.value = '';}
  }; }
 $('#refresh').onclick = () => {load();loadPKI();};
@@ -51,3 +54,50 @@ $("#logout").onclick=async()=>{try{await fetch("/api/logout",{method:"POST",head
 $('#eap-form').onsubmit=async e=>{e.preventDefault();const f=e.target;await mutate('/api/eap',{Enabled:f.elements.Enabled.checked,VLAN:Number(f.elements.VLAN.value)});};
 
 $('#session-action-form').onsubmit=async e=>{e.preventDefault();const f=e.target;if(!f.elements.Session.value)return;if(!confirm('Отправить действие на NAS для выбранной сессии?'))return;try{const data=JSON.parse(f.elements.Session.value);data.Action=f.elements.Action.value;data.VLAN=Number(f.elements.VLAN.value);const r=await fetch('/api/sessions/action',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(data)});if(!r.ok)throw new Error(await r.text());const result=await r.json();notice(result.Acknowledged?'NAS подтвердил выполнение: '+result.Code:'NAS отклонил запрос: '+result.Code+', Error-Cause='+result.ErrorCause,!result.Acknowledged);await load();}catch(err){notice(err.message,true);}};
+
+async function loadGuest(){
+ try{
+ const r=await fetch('/api/guest/config');if(!r.ok)throw new Error(await r.text());
+ const g=await r.json(),f=$('#sms-form'),p=$('#guest-policy-form');
+ for(const k of ['Provider','URL','AccountSID','From','CAPEM'])f.elements[k].value=g.SMS[k]||'';
+ f.elements.Token.value='';$('#sms-status').textContent=g.HasToken?'Токен сохранён в зашифрованном виде.':'Токен ещё не задан.';
+ p.elements.Enabled.checked=g.Policy.Enabled;
+ for(const k of ['VLAN','SessionSeconds','MaxPerHour'])p.elements[k].value=g.Policy[k];
+ table('#guest-list',['NAS','MAC','Телефон','VLAN','До'],g.Sessions.map(s=>[s.NAS,s.MAC,s.MaskedPhone,s.VLAN,date(s.Expires)]));
+ $('#guest-actions').replaceChildren();
+ for(const s of g.Sessions){const b=document.createElement('button');b.className='remove';b.textContent='Отозвать '+s.MAC+' / '+s.NAS;b.onclick=async()=>{if(confirm('Отозвать гостевое разрешение?'))await mutate('/api/guest/revoke',{NAS:s.NAS,MAC:s.MAC});};$('#guest-actions').append(b);}
+ }catch(e){$('#sms-status').textContent=e.message;}
+}
+$('#sms-form').onsubmit=async e=>{e.preventDefault();await mutate('/api/guest/sms',Object.fromEntries(new FormData(e.target)));};
+$('#guest-policy-form').onsubmit=async e=>{e.preventDefault();const f=e.target;await mutate('/api/guest/policy',{Enabled:f.elements.Enabled.checked,VLAN:Number(f.elements.VLAN.value),SessionSeconds:Number(f.elements.SessionSeconds.value),MaxPerHour:Number(f.elements.MaxPerHour.value)});};
+
+let dictionaries=[];
+function showDictionary(){const d=dictionaries.find(d=>d.ID===$('#nas-dictionary').value);if(!d)return;$('#dictionary-notes').textContent=d.Notes;const f=$('#nas-form');for(const o of f.elements.Mode.options)o.disabled=(d.ID==='keenetic'||d.ID==='strongswan')&&o.value!=='network';if(f.elements.Mode.selectedOptions[0]?.disabled)f.elements.Mode.value='network';table('#dictionary-attributes',['Атрибут','Vendor ID','Код','Тип'],d.Attributes.map(a=>[a.Name,a.Vendor,a.Code,a.Type]));}
+async function loadProfiles(){
+ try{
+ const r=await fetch('/api/dictionaries');if(!r.ok)throw new Error(await r.text());dictionaries=await r.json();
+ const select=$('#nas-dictionary'),value=select.value||'standard';select.replaceChildren();for(const d of dictionaries)select.add(new Option(d.Name,d.ID));select.value=value;showDictionary();
+ const nas=$('#grant-nas'),old=nas.value;nas.replaceChildren();for(const n of state.nas.filter(n=>n.Mode!=='network'))nas.add(new Option(n.Name+' · '+n.Address+' · '+n.Mode,n.Address));if(old)nas.value=old;
+ const response=await fetch('/api/nas/grants');if(!response.ok)throw new Error(await response.text());const grants=await response.json();
+ table('#nas-grants',['NAS','Пользователь','Режим','Уровень','Группа','Профиль','Filter-Id'],grants.map(g=>[g.NAS,g.Username,g.Mode,g.Privilege,g.Group,g.Role,g.Filter]));
+ $('#nas-grant-actions').replaceChildren();for(const g of grants){const b=document.createElement('button');b.textContent='Отозвать '+g.Username+' / '+g.NAS+' / '+g.Mode;b.className='remove';b.onclick=async()=>{if(confirm('Отозвать разрешение?'))await mutate('/api/nas/grants/delete',g)};$('#nas-grant-actions').append(b);}
+ }catch(e){notice(e.message,true);}
+}
+$('#nas-dictionary').onchange=showDictionary;
+$('#nas-grant-form').onsubmit=async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));d.Privilege=Number(d.Privilege);await mutate('/api/nas/grants',d);};
+
+let fingerprints=[];
+function renderFingerprints(){
+ const query=$('#fingerprint-search').value.toLowerCase();
+ const rows=fingerprints.filter(f=>Object.values(f).join(' ').toLowerCase().includes(query));
+ table('#fingerprint-list',['MAC','NAS','Производитель / OUI','ОС','Тип','DHCP','Последний запрос'],rows.map(f=>[f.MAC,f.NAS,f.Manufacturer||f.OUIManufacturer||'Не определён',f.OS,f.DeviceType,f.DHCPOptions,date(f.LastSeen)]));
+ $('#fingerprint-actions').replaceChildren();
+ for(const f of rows){const b=document.createElement('button');b.textContent='Профиль '+f.MAC;b.onclick=async()=>{
+ const form=$('#fingerprint-form');for(const k of ['MAC','NAS','DHCPOptions','VendorClass','Hostname','OS','Manufacturer','DeviceType'])form.elements[k].value=f[k];
+ try{const r=await fetch('/api/fingerprints/history?mac='+encodeURIComponent(f.MAC));if(!r.ok)throw new Error(await r.text());const h=await r.json();table('#fingerprint-history',['Время','Источник','Изменение'],h.map(v=>[date(v.Time),v.Source,v.Detail]));}catch(e){notice(e.message,true);}
+ };$('#fingerprint-actions').append(b);}
+}
+async function loadFingerprints(){try{const r=await fetch('/api/fingerprints');if(!r.ok)throw new Error(await r.text());fingerprints=await r.json();renderFingerprints();}catch(e){notice(e.message,true);}}
+$('#fingerprint-search').oninput=renderFingerprints;
+$('#fingerprint-form').onsubmit=async e=>{e.preventDefault();await mutate('/api/fingerprints',Object.fromEntries(new FormData(e.target)));};
+$('#oui-form').onsubmit=async e=>{e.preventDefault();await mutate('/api/fingerprints/oui',Object.fromEntries(new FormData(e.target)));};

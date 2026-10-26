@@ -1,0 +1,27 @@
+[Unit]
+Description=Border RADIUS and management server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=border
+Group=border
+WorkingDirectory=/var/lib/border
+EnvironmentFile=/etc/border/border.env
+ExecStart=/usr/local/bin/radiusd serve --web 127.0.0.1:18443 --portal 127.0.0.1:19443 --certs /etc/border/certs --acme-http 127.0.0.1:18080
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+StateDirectory=border
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/border
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

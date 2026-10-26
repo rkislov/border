@@ -6,33 +6,27 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
-	"net"
-	"strings"
 
+	"github.com/rkislov/border/internal/identity"
 	"github.com/rkislov/border/internal/store"
+	"time"
 )
 
-func NormalizeMAC(raw string) (string, error) {
-	if len(raw) == 12 {
-		raw = raw[0:2] + ":" + raw[2:4] + ":" + raw[4:6] + ":" + raw[6:8] + ":" + raw[8:10] + ":" + raw[10:12]
-	}
-	m, err := net.ParseMAC(raw)
-	if err != nil || len(m) != 6 {
-		return "", fmt.Errorf("invalid MAC address")
-	}
-	return strings.ToLower(m.String()), nil
-}
+func NormalizeMAC(raw string) (string, error) { return identity.MAC(raw) }
 
 type Decision struct {
-	Accept bool
-	VLAN   int
-	Voice  bool
-	Reason string
+	Accept  bool
+	VLAN    int
+	Voice   bool
+	Reason  string
+	Timeout uint32
 }
 
 // Decide never falls back to isolation on a database error or disabled device.
 func Decide(ctx context.Context, s *store.Store, mac string) (Decision, error) {
+	return DecideForNAS(ctx, s, "", mac)
+}
+func DecideForNAS(ctx context.Context, s *store.Store, nas, mac string) (Decision, error) {
 	d, err := s.Device(ctx, mac)
 	if err == nil {
 		if !d.Active {
@@ -42,6 +36,17 @@ func Decide(ctx context.Context, s *store.Store, mac string) (Decision, error) {
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Decision{}, err
+	}
+	if nas != "" {
+		vlan, expires, err := s.GuestAccess(ctx, nas, mac)
+		if err == nil {
+			remaining := expires - time.Now().Unix()
+			if remaining > 0 {
+				return Decision{Accept: true, VLAN: vlan, Reason: "guest SMS grant", Timeout: uint32(remaining)}, nil
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return Decision{}, err
+		}
 	}
 	vlan, err := s.Isolation(ctx)
 	if err != nil {

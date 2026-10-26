@@ -93,6 +93,13 @@ func TestTransferToPostgres(t *testing.T) {
 	defer src.DB.Close()
 	checkStore(t, src)
 	for _, q := range []string{
+		"INSERT INTO nas(address,name,secret,portal_enabled,dictionary,access_mode) VALUES ('192.0.2.1','test','test-secret-123456789',1,'cisco','ssh')",
+		"INSERT INTO nas_grants(nas,username,mode,privilege) VALUES('192.0.2.1','user','ssh',3)",
+		"UPDATE guest_policy SET vlan=123,enabled=1",
+		"INSERT INTO guest_sessions(nas,mac,masked_phone,vlan,expires_at) VALUES('192.0.2.1','00:11:22:33:44:55','+7*******4567',123,9999999999)",
+		"INSERT INTO device_fingerprints(mac,source,first_seen,last_seen) VALUES('00:11:22:33:44:55','admin',1,2)",
+		"INSERT INTO fingerprint_history(id,mac,observed_at,source,detail) VALUES('fp','00:11:22:33:44:55',2,'admin','{}')",
+		"INSERT INTO oui_prefixes VALUES('001122','test vendor')",
 		"INSERT INTO identities(username,email,totp_secret) VALUES ('user','user@example.test','encrypted-test-secret')",
 		"INSERT INTO user_codes VALUES ('digest','user','recovery',9999999999)",
 		"INSERT INTO certificate_authorities VALUES ('ca','root','certificate','encrypted-test-key',1)",
@@ -112,6 +119,12 @@ func TestTransferToPostgres(t *testing.T) {
 	}
 	if err = Transfer(ctx, src, dst); err != nil {
 		t.Fatal(err)
+	}
+	if g, err := dst.NASGrant(ctx, "192.0.2.1", "user", "ssh"); err != nil || g.Privilege != 3 {
+		t.Fatalf("grant transfer: %+v %v", g, err)
+	}
+	if f, err := dst.Fingerprints(ctx); err != nil || len(f) != 1 || f[0].OUIManufacturer != "test vendor" {
+		t.Fatalf("fingerprint transfer: %+v %v", f, err)
 	}
 	if !dst.CheckAdmin(ctx, "admin", "replacement-password") {
 		t.Fatal("password not transferred")

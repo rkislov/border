@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rkislov/border/internal/directory"
 	"github.com/rkislov/border/internal/eap"
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
@@ -83,8 +84,9 @@ func Serve(ctx context.Context, conn net.PacketConn, s *store.Store, workers int
 }
 
 type Options struct {
-	Network NetworkVerifier
-	EAP     *eap.Engine
+	Directory directory.Authenticator
+	Network   NetworkVerifier
+	EAP       *eap.Engine
 }
 
 func ServeAuthenticated(ctx context.Context, conn net.PacketConn, s *store.Store, workers int, accounting bool, verifier NetworkVerifier) error {
@@ -203,6 +205,29 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 	if p.Code != radius.CodeAccessRequest || !VerifyMessageAuthenticator(raw, secret) {
 		return nil, errors.New("missing or invalid Message-Authenticator")
 	}
+	if mac, e := NormalizeMAC(rfc2865.CallingStationID_GetString(p)); e == nil {
+		if e = s.ObserveFingerprint(ctx, store.Fingerprint{MAC: mac, NAS: host, Source: "radius"}); e != nil {
+			return nil, errors.New("fingerprint write failed")
+		}
+	}
+	profile, err := s.NASProfile(ctx, host)
+	if err != nil {
+		return nil, errors.New("NAS profile unavailable")
+	}
+	if profile.Mode != "network" {
+		return processService(ctx, s, p, host, profile, options)
+	}
+	for _, a := range p.Attributes {
+		if a.Type == 26 {
+			vendor, data, e := radius.VendorSpecific(a.Attribute)
+			if e == nil && vendor == 311 && len(data) > 0 && (data[0] == 1 || data[0] == 11 || data[0] == 25) {
+				return nil, errors.New("MSCHAP is not supported")
+			}
+		}
+	}
+	if len(p.Attributes.Get(3)) > 0 {
+		return nil, errors.New("CHAP is not supported")
+	}
 	decision := Decision{Reason: "EAP is not available in this version"}
 	identity := ""
 	hasEAP := false
@@ -241,7 +266,7 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 		}
 		identity, err = NormalizeMAC(identity)
 		if err == nil {
-			decision, err = Decide(ctx, s, identity)
+			decision, err = DecideForNAS(ctx, s, host, identity)
 			if err != nil {
 				return nil, errors.New("policy lookup failed")
 			}
@@ -285,7 +310,7 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 				return nil, err
 			}
 		}
-		if decision.Voice {
+		if decision.Voice && profile.Dictionary == "cisco" {
 			v := []byte("device-traffic-class=voice")
 			attr := make([]byte, 6+len(v))
 			binary.BigEndian.PutUint32(attr[:4], 9)
@@ -294,7 +319,11 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 			copy(attr[6:], v)
 			out.Attributes.Add(26, attr)
 		}
-		if err = rfc2865.SessionTimeout_Set(out, 3600); err != nil {
+		timeout := uint32(3600)
+		if decision.Timeout > 0 {
+			timeout = decision.Timeout
+		}
+		if err = rfc2865.SessionTimeout_Set(out, rfc2865.SessionTimeout(timeout)); err != nil {
 			return nil, err
 		}
 	}
