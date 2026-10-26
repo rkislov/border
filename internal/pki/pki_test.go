@@ -31,6 +31,9 @@ func TestCertificates(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				if len(cert.AuthorityKeyId) == 0 {
+					t.Fatal("leaf requires AuthorityKeyIdentifier for strict X509 clients")
+				}
 				opts := x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
 				if name == "server" {
 					opts.DNSName = host
