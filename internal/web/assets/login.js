@@ -1,0 +1,2 @@
+'use strict';
+document.querySelector('#login').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;try{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});e.target.elements.Password.value='';if(!r.ok)throw new Error(await r.text());location.href='/';}catch(err){document.querySelector('#error').textContent=err.message;}finally{b.disabled=false;}};

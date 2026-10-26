@@ -1,0 +1,49 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: border_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BORDER_TEST_POSTGRES: postgres://postgres:test-only-password@localhost:5432/border_test?sslmode=disable
+      BORDER_TEST_TRANSFER: postgres://postgres:test-only-password@localhost:5432/border_transfer?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare migration test database
+        env:
+          PGPASSWORD: test-only-password
+        run: psql -h localhost -U postgres -d postgres -c 'CREATE DATABASE border_transfer'
+      - run: make check
+      - run: go test -race -coverprofile=coverage.out ./...
+      - run: make audit
+      - run: make build
+      - run: python3 scripts/package.py --licenses-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: radiusd-linux-amd64
+          path: |
+            bin/radiusd
+            LICENSE
+            NOTICE
+            THIRD_PARTY.md
+            dist/licenses

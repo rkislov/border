@@ -1,0 +1,22 @@
+/bin/
+/data/
+/certs/
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite*
+*.key
+*.pem
+*.p12
+*.pfx
+coverage.out
+.DS_Store
+# Private input documents must never be published.
+/attachments/
+/SPECIFICATION*
+/docs/SPECIFICATION*
+/Вставленный*
+/dist/
+/.scratch/
