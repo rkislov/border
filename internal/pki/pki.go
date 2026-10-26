@@ -40,6 +40,12 @@ func Generate(dir, host string) error {
 	if err != nil {
 		return err
 	}
+	// Parse the actual CA so generated SubjectKeyId is available when signing
+	// leaves; OpenSSL strict validation requires their AuthorityKeyIdentifier.
+	ca, err = x509.ParseCertificate(cert)
+	if err != nil {
+		return err
+	}
 	write := func(name, typ string, b []byte) error {
 		f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
