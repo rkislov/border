@@ -21,6 +21,7 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/directory"
+	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/pki"
 )
 
@@ -37,6 +38,7 @@ type attempt struct {
 	Since time.Time
 }
 type Portal struct {
+	Guest     *guest.Service
 	Auth      directory.Authenticator
 	Codes     *auth.Service
 	PKI       *pki.Manager
@@ -47,8 +49,12 @@ type Portal struct {
 	slots     chan struct{}
 }
 
-func New(a directory.Authenticator, c *auth.Service, p *pki.Manager, url string) *Portal {
-	return &Portal{Auth: a, Codes: c, PKI: p, PublicURL: strings.TrimSuffix(url, "/"), sessions: make(map[string]session), attempts: make(map[string]attempt), slots: make(chan struct{}, 16)}
+func New(a directory.Authenticator, c *auth.Service, p *pki.Manager, url string, guests ...*guest.Service) *Portal {
+	portal := &Portal{Auth: a, Codes: c, PKI: p, PublicURL: strings.TrimSuffix(url, "/"), sessions: make(map[string]session), attempts: make(map[string]attempt), slots: make(chan struct{}, 16)}
+	if len(guests) > 0 {
+		portal.Guest = guests[0]
+	}
+	return portal
 }
 func token() string {
 	b := make([]byte, 32)
@@ -76,6 +82,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 func (p *Portal) Handler() http.Handler {
 	mux := http.NewServeMux()
+	p.guestRoutes(mux)
 	files, _ := fs.Sub(assets, "assets")
 	mux.Handle("GET /", http.FileServer(http.FS(files)))
 	mux.HandleFunc("GET /crl/{id}", func(w http.ResponseWriter, r *http.Request) {

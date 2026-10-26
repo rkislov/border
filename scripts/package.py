@@ -12,7 +12,7 @@ import sys
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = os.environ.get("BORDER_VERSION", "v0.2.0-alpha.1")
+VERSION = os.environ.get("BORDER_VERSION", "v0.3.0-alpha.1")
 if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+[-a-zA-Z0-9.]*", VERSION):
     raise ValueError("Invalid release version")
 DIST = ROOT / "dist"

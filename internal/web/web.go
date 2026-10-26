@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/rkislov/border/internal/aaa"
+	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/pki"
+	"github.com/rkislov/border/internal/radprofile"
 	"github.com/rkislov/border/internal/store"
 )
 
@@ -27,6 +29,7 @@ import (
 var assets embed.FS
 
 type app struct {
+	guest    *guest.Service
 	mu       sync.Mutex
 	sessions map[string]time.Time
 	attempts map[string]loginAttempt
@@ -42,13 +45,19 @@ func Handler(s *store.Store) http.Handler { return HandlerWithOptions(s, nil, ni
 func HandlerWithPKI(s *store.Store, manager *pki.Manager, acme *pki.ACME) http.Handler {
 	return HandlerWithOptions(s, manager, acme, true)
 }
-func HandlerWithOptions(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS bool) http.Handler {
+func HandlerWithOptions(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS bool, guests ...*guest.Service) http.Handler {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
 	a := &app{sessions: make(map[string]time.Time), attempts: make(map[string]loginAttempt), pki: manager, acme: acme, s: s, csrf: hex.EncodeToString(b), t: template.Must(template.ParseFS(assets, "assets/index.html")), slots: make(chan struct{}, 16)}
+	if len(guests) > 0 {
+		a.guest = guests[0]
+	}
 	mux := http.NewServeMux()
+	a.guestRoutes(mux)
+	a.profileRoutes(mux)
+	a.fingerprintRoutes(mux)
 	sub, err := fs.Sub(assets, "assets")
 	if err != nil {
 		panic(err)
@@ -181,10 +190,29 @@ func (a *app) state(w http.ResponseWriter, r *http.Request) {
 }
 func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 	var v struct {
-		Address, Name, Secret string
-		CoAPort               int
+		Address, Name, Secret        string
+		Dictionary, Mode, Credential string
+		CoAPort                      int
+		PortalEnabled                bool
 	}
 	if !decode(w, r, &v) {
+		return
+	}
+	if v.Dictionary == "" {
+		v.Dictionary = "standard"
+	}
+	if v.Mode == "" {
+		v.Mode = "network"
+	}
+	if v.Credential == "" {
+		v.Credential = "codes"
+	}
+	if err := (radprofile.Config{Dictionary: v.Dictionary, Mode: v.Mode, Credential: v.Credential}).Validate(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if v.Mode != "network" && v.PortalEnabled {
+		http.Error(w, "SMS portal requires network mode", 400)
 		return
 	}
 	if v.CoAPort == 0 {
@@ -199,7 +227,7 @@ func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "IP, имя и секрет 16–128 байт обязательны", 400)
 		return
 	}
-	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret,coa_port) VALUES (?,?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret,coa_port=excluded.coa_port", ip.String(), v.Name, v.Secret, v.CoAPort), "save NAS")
+	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret,coa_port,portal_enabled,dictionary,access_mode,credential) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret,coa_port=excluded.coa_port,portal_enabled=excluded.portal_enabled,dictionary=excluded.dictionary,access_mode=excluded.access_mode,credential=excluded.credential", ip.String(), v.Name, v.Secret, v.CoAPort, boolInt(v.PortalEnabled), v.Dictionary, v.Mode, v.Credential), "save NAS")
 }
 func (a *app) vlan(w http.ResponseWriter, r *http.Request) {
 	var v store.VLAN
@@ -270,4 +298,11 @@ func (a *app) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.finish(w, r, a.s.Exec(r.Context(), q, v.Key), "delete "+v.Kind)
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }

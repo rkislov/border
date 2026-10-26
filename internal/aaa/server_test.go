@@ -69,6 +69,9 @@ func TestNormalizeMAC(t *testing.T) {
 }
 func TestMABPolicies(t *testing.T) {
 	s := database(t)
+	if err := s.Exec(t.Context(), "UPDATE nas SET dictionary='cisco'"); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		mac    string
 		accept bool

@@ -23,6 +23,7 @@ import (
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/directory"
 	"github.com/rkislov/border/internal/eap"
+	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/mail"
 	"github.com/rkislov/border/internal/pki"
 	"github.com/rkislov/border/internal/selfservice"
@@ -32,7 +33,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.2.0-dev"
+var version = "0.3.0-dev"
 
 func main() {
 	if err := command().Execute(); err != nil {
@@ -143,6 +144,7 @@ func command() *cobra.Command {
 			tlsConfig.ClientAuth = tls.NoClientCert
 			tlsConfig.ClientCAs = nil
 		}
+		var guests *guest.Service
 		var codes *auth.Service
 		var managedPKI *pki.Manager
 		var acmeClient *pki.ACME
@@ -171,6 +173,31 @@ func command() *cobra.Command {
 			codes, err = auth.New(s, key, notifier, networkVLAN)
 			if err != nil {
 				return err
+			}
+			guests, err = guest.New(s, key)
+			if err != nil {
+				return err
+			}
+			defer guests.Close()
+			guests.PublicURL = publicURL
+			guests.Reconnect = func(ctx context.Context, nas, id, mac string, vlan int) error {
+				var current store.Session
+				current.NAS = nas
+				current.ID = id
+				if err := s.Row(ctx, "SELECT mac,username,updated_at FROM sessions WHERE nas=? AND session_id=? AND status='active'", nas, id).Scan(&current.MAC, &current.Username, &current.Updated); err != nil {
+					return err
+				}
+				if current.MAC != mac {
+					return fmt.Errorf("NAS session does not match guest device")
+				}
+				result, err := aaa.ChangeSession(ctx, s, nas, id, "vlan", vlan, current)
+				if err != nil {
+					return err
+				}
+				if !result.Acknowledged {
+					return fmt.Errorf("NAS rejected CoA")
+				}
+				return nil
 			}
 			managedPKI = &pki.Manager{Store: s, Vault: codes.Vault}
 			acmeClient, err = pki.NewACME(c.Context(), managedPKI)
@@ -257,10 +284,10 @@ func command() *cobra.Command {
 		defer stop()
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		server := &http.Server{Handler: web.HandlerWithOptions(s, managedPKI, acmeClient, adminMTLS), TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		server := &http.Server{Handler: web.HandlerWithOptions(s, managedPKI, acmeClient, adminMTLS, guests), TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		errors := make(chan error, 5)
 		starts := []func() error{func() error {
-			return aaa.ServeWithOptions(ctx, auth, s, workers, false, aaa.Options{Network: codesVerifier(codes), EAP: eapEngine})
+			return aaa.ServeWithOptions(ctx, auth, s, workers, false, aaa.Options{Network: codesVerifier(codes), EAP: eapEngine, Directory: domain})
 		}, func() error { return aaa.Serve(ctx, acct, s, workers, true) }, func() error { return server.Serve(tls.NewListener(listener, tlsConfig)) }}
 
 		extraServers := []*http.Server{}
@@ -273,7 +300,7 @@ func command() *cobra.Command {
 			portalTLS := tlsConfig.Clone()
 			portalTLS.ClientAuth = tls.NoClientCert
 			portalTLS.ClientCAs = nil
-			portalServer := &http.Server{Handler: selfservice.New(domain, codes, managedPKI, publicURL).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+			portalServer := &http.Server{Handler: selfservice.New(domain, codes, managedPKI, publicURL, guests).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 			extraServers = append(extraServers, portalServer)
 			starts = append(starts, func() error { return portalServer.Serve(tls.NewListener(portalListener, portalTLS)) })
 		}
@@ -286,6 +313,10 @@ func command() *cobra.Command {
 			challengeServer := &http.Server{Handler: acmeClient.HTTPHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8192}
 			extraServers = append(extraServers, challengeServer)
 			starts = append(starts, func() error { return challengeServer.Serve(challengeListener) })
+		}
+		if guests != nil {
+			stopCleanup := guests.StartCleanup(ctx)
+			defer stopCleanup()
 		}
 		for _, start := range starts {
 			go func(fn func() error) { errors <- fn() }(start)

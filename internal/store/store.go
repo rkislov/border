@@ -27,8 +27,10 @@ type Store struct {
 	Driver string
 }
 type NAS struct {
-	Address, Name string
-	CoAPort       int
+	Address, Name                string
+	Dictionary, Mode, Credential string
+	CoAPort                      int
+	PortalEnabled                bool
 }
 type VLAN struct {
 	ID   int
@@ -195,7 +197,7 @@ func (s *Store) Accounting(ctx context.Context, source, id, mac, user, status st
 	return s.Exec(ctx, "INSERT INTO sessions(nas,session_id,mac,username,status,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(nas,session_id) DO UPDATE SET mac=excluded.mac,username=excluded.username,status=excluded.status,updated_at=excluded.updated_at", source, id, mac, user, status, time.Now().Unix())
 }
 func (s *Store) NASList(ctx context.Context) ([]NAS, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT address,name,coa_port FROM nas ORDER BY name")
+	rows, err := s.DB.QueryContext(ctx, "SELECT address,name,coa_port,portal_enabled,dictionary,access_mode,credential FROM nas ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +205,7 @@ func (s *Store) NASList(ctx context.Context) ([]NAS, error) {
 	out := []NAS{}
 	for rows.Next() {
 		var v NAS
-		if err = rows.Scan(&v.Address, &v.Name, &v.CoAPort); err != nil {
+		if err = rows.Scan(&v.Address, &v.Name, &v.CoAPort, &v.PortalEnabled, &v.Dictionary, &v.Mode, &v.Credential); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

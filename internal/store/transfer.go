@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -19,7 +20,7 @@ func Transfer(ctx context.Context, source, target *Store) error {
 		return err
 	}
 	defer tx.Rollback()
-	tables := []string{"admins", "nas", "vlan_catalog", "mac_auth", "settings", "auth_log", "sessions", "identities", "user_codes", "certificate_authorities", "certificates"}
+	tables := []string{"admins", "nas", "vlan_catalog", "mac_auth", "settings", "auth_log", "sessions", "identities", "user_codes", "certificate_authorities", "certificates", "guest_policy", "guest_challenges", "guest_sessions", "nas_grants", "device_fingerprints", "fingerprint_history", "oui_prefixes"}
 	for _, table := range tables {
 		var n int
 		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
@@ -50,11 +51,27 @@ func Transfer(ctx context.Context, source, target *Store) error {
 				return err
 			}
 		}
-		if n > 0 && table != "settings" {
+		if table == "guest_policy" {
+			var enabled, ttl, limit int
+			var vlan sql.NullInt64
+			if n != 1 {
+				return fmt.Errorf("target guest policy is not pristine")
+			}
+			if err = tx.QueryRowContext(ctx, "SELECT enabled,vlan,session_seconds,max_per_hour FROM guest_policy WHERE id=1").Scan(&enabled, &vlan, &ttl, &limit); err != nil {
+				return err
+			}
+			if enabled != 0 || vlan.Valid || ttl != 3600 || limit != 1000 {
+				return fmt.Errorf("target guest policy is not pristine")
+			}
+		}
+		if n > 0 && table != "settings" && table != "guest_policy" {
 			return fmt.Errorf("target table %s is not empty", table)
 		}
 	}
 	if _, err = tx.ExecContext(ctx, "DELETE FROM settings"); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM guest_policy"); err != nil {
 		return err
 	}
 	snapshot, err := source.DB.BeginTx(ctx, nil)
