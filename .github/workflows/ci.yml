@@ -33,6 +33,8 @@ jobs:
         env:
           PGPASSWORD: test-only-password
         run: psql -h localhost -U postgres -d postgres -c 'CREATE DATABASE border_transfer'
+      - name: Install independent EAP supplicant
+        run: sudo apt-get update && sudo apt-get install -y eapoltest
       - run: make check
       - run: go test -race -coverprofile=coverage.out ./...
       - run: make audit

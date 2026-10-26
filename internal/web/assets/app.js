@@ -19,18 +19,20 @@ function table(target, heads, rows, kind) {
 async function load() {
  try { const r = await fetch('/api/state'); if (!r.ok) throw new Error('Не удалось загрузить данные: ' + r.status); state = await r.json();
   $('#stat-nas').textContent = state.nas.length; $('#stat-vlans').textContent = state.vlans.length; $('#stat-devices').textContent = state.devices.filter(d => d.Active).length; $('#stat-sessions').textContent = state.sessions.filter(s => s.Status === 'active').length;
-  table('#nas-list', ['IP-адрес', 'Имя'], state.nas.map(n => [n.Address, n.Name]), 'nas');
+  table('#nas-list', ['IP-адрес', 'Имя', 'CoA порт'], state.nas.map(n => [n.Address, n.Name, n.CoAPort]), 'nas');
   table('#vlans-list', ['VLAN', 'Название'], state.vlans.map(v => [v.ID, v.Name]), 'vlans');
   table('#devices-list', ['MAC', 'VLAN', 'Статус', 'Тип', 'Комментарий'], state.devices.map(d => [d.MAC, d.VLAN || 'NAS default', d.Active ? 'Активно' : 'Запрещено', d.Voice ? 'Voice' : 'Data', d.Comment]), 'devices');
   table('#sessions-list', ['NAS', 'Сессия', 'MAC', 'Пользователь', 'Статус', 'Обновлено'], state.sessions.map(s => [s.NAS, s.ID, s.MAC, s.Username, s.Status, date(s.Updated)]));
   const heads = ['Время', 'Источник', 'Идентификатор', 'Результат', 'Причина']; const rows = state.events.map(e => [date(e.Time), e.Source, e.Identity, e.Result, e.Reason]); table('#events-list', heads, rows); table('#recent', heads, rows.slice(0, 8));
   document.querySelectorAll('.vlan-select').forEach(s => { const value = s.value; while(s.options.length > 1) s.remove(1); state.vlans.forEach(v => {const o = new Option(v.ID + ' · ' + v.Name, v.ID); s.add(o);}); s.value = value; });
+  $('#session-select').replaceChildren();state.sessions.filter(s=>s.Status==='active').forEach((s,i)=>$('#session-select').add(new Option(s.NAS+' · '+s.ID+' · '+s.Username,JSON.stringify({NAS:s.NAS,ID:s.ID,MAC:s.MAC,Username:s.Username,Updated:s.Updated}))));
   $('#settings-form').elements.Isolation.value = state.isolation;
+  const eapResponse=await fetch('/api/eap');if(eapResponse.ok){const ep=await eapResponse.json();$('#eap-form').elements.Enabled.checked=ep.Enabled;$('#eap-form').elements.VLAN.value=ep.VLAN;$('#eap-status').textContent=ep.Available?'Используются управляемые CA из раздела сертификатов.':'Для EAP-TLS задайте BORDER_MASTER_KEY и перезапустите radiusd.';}
  } catch(e) { notice(e.message, true); }
 }
 async function mutate(url, data) { try { const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify(data) }); if (!r.ok) throw new Error(await r.text()); notice('Изменения сохранены'); await load(); return true; } catch(e) { notice(e.message, true); return false; } }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => { document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== b.dataset.view); document.querySelectorAll('nav button').forEach(n => n.classList.toggle('selected', n === b)); $('#breadcrumb').textContent = b.childNodes[0].textContent.trim().toUpperCase(); });
-for (const kind of ['nas', 'devices', 'vlans', 'settings']) { const form = $('#' + kind + '-form'); form.onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(form)); for (const k of ['VLAN', 'ID', 'Isolation']) if (k in data) data[k] = Number(data[k]); if (kind === 'devices') {data.Active = form.elements.Active.checked; data.Voice = form.elements.Voice.checked;}
+for (const kind of ['nas', 'devices', 'vlans', 'settings']) { const form = $('#' + kind + '-form'); form.onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(form)); for (const k of ['VLAN', 'ID', 'Isolation', 'CoAPort']) if (k in data) data[k] = Number(data[k]); if (kind === 'devices') {data.Active = form.elements.Active.checked; data.Voice = form.elements.Voice.checked;}
  if (await mutate('/api/' + kind, data)) {if(kind === 'nas') form.elements.Secret.value = '';}
  }; }
 $('#refresh').onclick = () => {load();loadPKI();};
@@ -45,3 +47,7 @@ $('#acme-form').onsubmit=async e=>{e.preventDefault();try{const f=e.target,data=
 loadPKI();
 
 $("#logout").onclick=async()=>{try{await fetch("/api/logout",{method:"POST",headers:{"X-CSRF-Token":csrf}});location.reload();}catch(e){notice(e.message,true);}};
+
+$('#eap-form').onsubmit=async e=>{e.preventDefault();const f=e.target;await mutate('/api/eap',{Enabled:f.elements.Enabled.checked,VLAN:Number(f.elements.VLAN.value)});};
+
+$('#session-action-form').onsubmit=async e=>{e.preventDefault();const f=e.target;if(!f.elements.Session.value)return;if(!confirm('Отправить действие на NAS для выбранной сессии?'))return;try{const data=JSON.parse(f.elements.Session.value);data.Action=f.elements.Action.value;data.VLAN=Number(f.elements.VLAN.value);const r=await fetch('/api/sessions/action',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(data)});if(!r.ok)throw new Error(await r.text());const result=await r.json();notice(result.Acknowledged?'NAS подтвердил выполнение: '+result.Code:'NAS отклонил запрос: '+result.Code+', Error-Cause='+result.ErrorCause,!result.Acknowledged);await load();}catch(err){notice(err.message,true);}};

@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"github.com/pressly/goose/v3"
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
 
 func TestSQLiteLifecycle(t *testing.T) {
@@ -124,5 +126,80 @@ func TestTransferToPostgres(t *testing.T) {
 	}
 	if err = Transfer(ctx, src, dst); err == nil {
 		t.Fatal("overwrote populated target")
+	}
+}
+
+func TestEAPPolicyReferences(t *testing.T) {
+	s, err := Open("sqlite", filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	ctx := t.Context()
+	if err = s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	enabled, vlan, err := s.EAPPolicy(ctx)
+	if err != nil || enabled || vlan != 0 {
+		t.Fatal("EAP must default to disabled")
+	}
+	if err = s.SetEAPPolicy(ctx, true, 100); err == nil {
+		t.Fatal("unknown VLAN accepted")
+	}
+	if err = s.Exec(ctx, "INSERT INTO vlan_catalog VALUES (?,?)", 100, "enterprise"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetEAPPolicy(ctx, true, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DeleteVLAN(ctx, 100); err == nil {
+		t.Fatal("EAP VLAN deleted")
+	}
+	enabled, vlan, err = s.EAPPolicy(ctx)
+	if err != nil || !enabled || vlan != 100 {
+		t.Fatal("EAP policy not saved")
+	}
+	if err = s.SetEAPPolicy(ctx, false, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DeleteVLAN(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpgradeFromFirstRelease(t *testing.T) {
+	s, err := Open("sqlite", filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	old := fstest.MapFS{}
+	for _, name := range []string{"00001_initial.sql", "00002_selfservice.sql"} {
+		b, err := migrations.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old[name] = &fstest.MapFile{Data: b}
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, s.DB, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Exec(t.Context(), "INSERT INTO nas(address,name,secret) VALUES ('127.0.0.1','old NAS','test-only-secret-123')"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	nas, err := s.NASList(t.Context())
+	if err != nil || len(nas) != 1 || nas[0].CoAPort != 3799 {
+		t.Fatal("NAS upgrade failed", err)
+	}
+	enabled, vlan, err := s.EAPPolicy(t.Context())
+	if err != nil || enabled || vlan != 0 {
+		t.Fatal("EAP must remain disabled after upgrade", err)
 	}
 }
