@@ -4,6 +4,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,9 +13,13 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = os.environ.get("BORDER_VERSION", "v0.1.0-alpha.1")
+if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+[-a-zA-Z0-9.]*", VERSION):
+    raise ValueError("Invalid release version")
 DIST = ROOT / "dist"
 DIST.mkdir(exist_ok=True)
 licenses = DIST / "licenses"
+if licenses.exists():
+    shutil.rmtree(licenses)
 licenses.mkdir(exist_ok=True)
 raw = subprocess.check_output(["go", "list", "-deps", "-json", "./cmd/radiusd"], cwd=ROOT, text=True)
 decoder, modules = json.JSONDecoder(), {}
@@ -48,7 +53,9 @@ if "--licenses-only" in sys.argv:
 def build(target):
     target_os, arch = target
     folder = DIST / ("border-" + VERSION + "-" + target_os + "-" + arch)
-    folder.mkdir(exist_ok=True)
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir()
     env = dict(os.environ, CGO_ENABLED="0", GOOS=target_os, GOARCH=arch)
     subprocess.run(["go", "build", "-trimpath", "-ldflags=-s -w -X main.version=" + VERSION, "-o", str(folder / "radiusd"), "./cmd/radiusd"], cwd=ROOT, env=env, check=True)
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY.md", "README.md", ".env.example"):
