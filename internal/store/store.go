@@ -26,7 +26,10 @@ type Store struct {
 	DB     *sql.DB
 	Driver string
 }
-type NAS struct{ Address, Name string }
+type NAS struct {
+	Address, Name string
+	CoAPort       int
+}
 type VLAN struct {
 	ID   int
 	Name string
@@ -192,7 +195,7 @@ func (s *Store) Accounting(ctx context.Context, source, id, mac, user, status st
 	return s.Exec(ctx, "INSERT INTO sessions(nas,session_id,mac,username,status,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(nas,session_id) DO UPDATE SET mac=excluded.mac,username=excluded.username,status=excluded.status,updated_at=excluded.updated_at", source, id, mac, user, status, time.Now().Unix())
 }
 func (s *Store) NASList(ctx context.Context) ([]NAS, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT address,name FROM nas ORDER BY name")
+	rows, err := s.DB.QueryContext(ctx, "SELECT address,name,coa_port FROM nas ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +203,7 @@ func (s *Store) NASList(ctx context.Context) ([]NAS, error) {
 	out := []NAS{}
 	for rows.Next() {
 		var v NAS
-		if err = rows.Scan(&v.Address, &v.Name); err != nil {
+		if err = rows.Scan(&v.Address, &v.Name, &v.CoAPort); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

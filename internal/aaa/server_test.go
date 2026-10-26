@@ -27,7 +27,7 @@ func database(t *testing.T) *store.Store {
 	if err = s.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{"INSERT INTO nas VALUES ('127.0.0.1','test','" + testSecret + "')", "INSERT INTO vlan_catalog VALUES (100,'data'),(200,'voice'),(999,'isolation')", "INSERT INTO mac_auth VALUES ('aa:bb:cc:dd:ee:ff',100,1,0,'printer'),('00:11:22:33:44:55',200,1,1,'phone'),('11:22:33:44:55:66',100,0,0,'blocked')"} {
+	for _, q := range []string{"INSERT INTO nas(address,name,secret) VALUES ('127.0.0.1','test','" + testSecret + "')", "INSERT INTO vlan_catalog VALUES (100,'data'),(200,'voice'),(999,'isolation')", "INSERT INTO mac_auth VALUES ('aa:bb:cc:dd:ee:ff',100,1,0,'printer'),('00:11:22:33:44:55',200,1,1,'phone'),('11:22:33:44:55:66',100,0,0,'blocked')"} {
 		if err = s.Exec(context.Background(), q); err != nil {
 			t.Fatal(err)
 		}
@@ -145,6 +145,10 @@ func TestProtocolRejections(t *testing.T) {
 		r, err := radius.Parse(b, []byte(testSecret))
 		if err != nil || r.Code != radius.CodeAccessReject {
 			t.Fatal("EAP fell back to MAB")
+		}
+		message := r.Attributes.Get(79)
+		if len(message) != 4 || message[0] != 4 {
+			t.Fatal("EAP rejection must include EAP-Failure")
 		}
 	}
 }

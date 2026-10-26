@@ -1,0 +1,4 @@
+-- +goose Up
+ALTER TABLE nas ADD COLUMN coa_port INTEGER NOT NULL DEFAULT 3799 CHECK(coa_port BETWEEN 1 AND 65535);
+-- +goose Down
+ALTER TABLE nas DROP COLUMN coa_port;

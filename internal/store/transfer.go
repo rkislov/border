@@ -26,15 +26,28 @@ func Transfer(ctx context.Context, source, target *Store) error {
 			return fmt.Errorf("inspect target table %s: %w", table, err)
 		}
 		if table == "settings" {
-			var name, value string
-			if n != 1 {
+			if n != 3 {
 				return fmt.Errorf("target settings are not pristine")
 			}
-			if err = tx.QueryRowContext(ctx, "SELECT name,value FROM settings").Scan(&name, &value); err != nil {
+			rows, err := tx.QueryContext(ctx, "SELECT name,value FROM settings")
+			if err != nil {
 				return err
 			}
-			if name != "isolation_vlan" || value != "0" {
-				return fmt.Errorf("target settings are not pristine")
+			for rows.Next() {
+				var name, value string
+				if err = rows.Scan(&name, &value); err != nil {
+					rows.Close()
+					return err
+				}
+				if (name != "isolation_vlan" && name != "eap_enabled" && name != "eap_vlan") || value != "0" {
+					rows.Close()
+					return fmt.Errorf("target settings are not pristine")
+				}
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return err
 			}
 		}
 		if n > 0 && table != "settings" {

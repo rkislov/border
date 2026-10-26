@@ -66,7 +66,10 @@ func HandlerWithOptions(s *store.Store, manager *pki.Manager, acme *pki.ACME, re
 	mux.HandleFunc("POST /api/vlans", a.vlan)
 	mux.HandleFunc("POST /api/devices", a.device)
 	mux.HandleFunc("POST /api/settings", a.settings)
+	mux.HandleFunc("GET /api/eap", a.eapPolicy)
+	mux.HandleFunc("POST /api/eap", a.setEAPPolicy)
 	mux.HandleFunc("POST /api/delete", a.delete)
+	mux.HandleFunc("POST /api/sessions/action", a.sessionAction)
 	mux.HandleFunc("POST /api/logout", a.logout)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -177,8 +180,18 @@ func (a *app) state(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{"nas": n, "vlans": v, "devices": d, "events": e, "sessions": s, "isolation": i, "time": time.Now().Unix()})
 }
 func (a *app) nas(w http.ResponseWriter, r *http.Request) {
-	var v struct{ Address, Name, Secret string }
+	var v struct {
+		Address, Name, Secret string
+		CoAPort               int
+	}
 	if !decode(w, r, &v) {
+		return
+	}
+	if v.CoAPort == 0 {
+		v.CoAPort = 3799
+	}
+	if v.CoAPort < 1 || v.CoAPort > 65535 {
+		http.Error(w, "CoA port: 1–65535", 400)
 		return
 	}
 	ip := net.ParseIP(v.Address)
@@ -186,7 +199,7 @@ func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "IP, имя и секрет 16–128 байт обязательны", 400)
 		return
 	}
-	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret) VALUES (?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret", ip.String(), v.Name, v.Secret), "save NAS")
+	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret,coa_port) VALUES (?,?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret,coa_port=excluded.coa_port", ip.String(), v.Name, v.Secret, v.CoAPort), "save NAS")
 }
 func (a *app) vlan(w http.ResponseWriter, r *http.Request) {
 	var v store.VLAN

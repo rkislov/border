@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/store"
@@ -151,5 +153,60 @@ func TestACMEConfigAndEncryptedCache(t *testing.T) {
 	}
 	if err = a.Configure(t.Context(), ACMEConfig{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEAPCertificateLedger(t *testing.T) {
+	m := manager(t)
+	ca, err := m.CreateCA(t.Context(), "EAP root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := m.Issue(t.Context(), ca.ID, "user", "user@example.test", "", "", 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(bundle.Certificate))
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, _ := pem.Decode([]byte(ca.Certificate))
+	root, err := x509.ParseCertificate(cb.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf, root}}}
+	owner, err := m.AuthorizeClient(t.Context(), state)
+	if err != nil || owner != "user" {
+		t.Fatal(owner, err)
+	}
+	if _, err = m.AuthorizeClient(t.Context(), tls.ConnectionState{PeerCertificates: state.PeerCertificates}); err == nil {
+		t.Fatal("unverified certificate accepted")
+	}
+
+	// TLS verification may happen in a later RADIUS request after the context
+	// which loaded the configuration has already been canceled.
+	initialCtx, cancel := context.WithCancel(t.Context())
+	config, err := m.EAPTLSConfig(initialCtx, tls.Certificate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err = config.VerifyConnection(state); err != nil {
+		t.Fatal("configuration retained request context", err)
+	}
+	expired := *leaf
+	expired.NotAfter = time.Now().Add(-time.Second)
+	expiredState := state
+	expiredState.PeerCertificates = []*x509.Certificate{&expired}
+	if _, err = m.AuthorizeClient(t.Context(), expiredState); err == nil {
+		t.Fatal("expired certificate accepted")
+	}
+	if err = m.Revoke(t.Context(), bundle.Serial, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.AuthorizeClient(t.Context(), state); err == nil {
+		t.Fatal("revoked certificate accepted")
 	}
 }

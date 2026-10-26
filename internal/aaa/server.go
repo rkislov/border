@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rkislov/border/internal/eap"
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
@@ -80,7 +81,16 @@ type NetworkVerifier interface {
 func Serve(ctx context.Context, conn net.PacketConn, s *store.Store, workers int, accounting bool) error {
 	return ServeAuthenticated(ctx, conn, s, workers, accounting, nil)
 }
+
+type Options struct {
+	Network NetworkVerifier
+	EAP     *eap.Engine
+}
+
 func ServeAuthenticated(ctx context.Context, conn net.PacketConn, s *store.Store, workers int, accounting bool, verifier NetworkVerifier) error {
+	return ServeWithOptions(ctx, conn, s, workers, accounting, Options{Network: verifier})
+}
+func ServeWithOptions(ctx context.Context, conn net.PacketConn, s *store.Store, workers int, accounting bool, options Options) error {
 	if workers < 1 || workers > 1024 {
 		return fmt.Errorf("workers must be between 1 and 1024")
 	}
@@ -103,7 +113,7 @@ func ServeAuthenticated(ctx context.Context, conn net.PacketConn, s *store.Store
 					}()
 					c, cancel := context.WithTimeout(ctx, 3*time.Second)
 					defer cancel()
-					reply, err := ProcessAuthenticated(c, s, j.raw, j.addr, accounting, verifier)
+					reply, err := ProcessWithOptions(c, s, j.raw, j.addr, accounting, options)
 					if err != nil {
 						slog.Debug("RADIUS packet dropped", "source", j.addr.String(), "reason", err.Error())
 						return
@@ -149,6 +159,10 @@ func Process(ctx context.Context, s *store.Store, raw []byte, addr net.Addr, acc
 	return ProcessAuthenticated(ctx, s, raw, addr, accounting, nil)
 }
 func ProcessAuthenticated(ctx context.Context, s *store.Store, raw []byte, addr net.Addr, accounting bool, verifier NetworkVerifier) ([]byte, error) {
+	return ProcessWithOptions(ctx, s, raw, addr, accounting, Options{Network: verifier})
+}
+func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr net.Addr, accounting bool, options Options) ([]byte, error) {
+	verifier := options.Network
 	host, _, err := net.SplitHostPort(addr.String())
 	if err != nil {
 		return nil, err
@@ -197,6 +211,9 @@ func ProcessAuthenticated(ctx context.Context, s *store.Store, raw []byte, addr 
 			hasEAP = true
 		}
 	}
+	if hasEAP && options.EAP != nil {
+		return processEAP(ctx, s, p, host, options.EAP)
+	}
 	username := rfc2865.UserName_GetString(p)
 	_, usernameMACError := NormalizeMAC(username)
 	hasPAP := len(p.Attributes.Get(2)) > 0 && username != "" && usernameMACError != nil
@@ -242,6 +259,19 @@ func ProcessAuthenticated(ctx context.Context, s *store.Store, raw []byte, addr 
 		if a.Type == 33 {
 			out.Attributes.Add(a.Type, a.Attribute)
 		}
+	}
+	if hasEAP {
+		var message []byte
+		for _, a := range p.Attributes {
+			if a.Type == 79 {
+				message = append(message, a.Attribute...)
+			}
+		}
+		var id byte
+		if len(message) > 1 {
+			id = message[1]
+		}
+		out.Attributes.Add(79, []byte{4, id, 0, 4})
 	}
 	if decision.Accept {
 		if decision.VLAN > 0 {

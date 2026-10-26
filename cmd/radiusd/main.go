@@ -22,6 +22,7 @@ import (
 	"github.com/rkislov/border/internal/aaa"
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/directory"
+	"github.com/rkislov/border/internal/eap"
 	"github.com/rkislov/border/internal/mail"
 	"github.com/rkislov/border/internal/pki"
 	"github.com/rkislov/border/internal/selfservice"
@@ -31,7 +32,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.1.0-dev"
+var version = "0.2.0-dev"
 
 func main() {
 	if err := command().Execute(); err != nil {
@@ -99,6 +100,9 @@ func command() *cobra.Command {
 			return err
 		}
 		defer source.DB.Close()
+		if err = source.Migrate(c.Context()); err != nil {
+			return err
+		}
 		target, err := store.Open("pgx", targetDSN)
 		if err != nil {
 			return err
@@ -190,6 +194,46 @@ func command() *cobra.Command {
 		} else if os.Getenv("BORDER_LDAP_URL") != "" || os.Getenv("BORDER_SMTP_ADDRESS") != "" {
 			return fmt.Errorf("LDAP/SMTP require BORDER_MASTER_KEY")
 		}
+		var eapEngine *eap.Engine
+		if managedPKI != nil {
+			eapPair := tlsConfig.Certificates[0]
+			eapEngine, err = eap.New(eap.Config{
+				TLSConfig: func(ctx context.Context) (*tls.Config, error) {
+					enabled, _, err := s.EAPPolicy(ctx)
+					if err != nil {
+						return nil, err
+					}
+					if !enabled {
+						return nil, fmt.Errorf("EAP disabled")
+					}
+					return managedPKI.EAPTLSConfig(ctx, eapPair)
+				},
+				Authorize: func(ctx context.Context, state tls.ConnectionState) (eap.Authorization, error) {
+					enabled, vlan, err := s.EAPPolicy(ctx)
+					if err != nil {
+						return eap.Authorization{}, err
+					}
+					if !enabled {
+						return eap.Authorization{}, fmt.Errorf("EAP disabled")
+					}
+					identity, err := managedPKI.AuthorizeClient(ctx, state)
+					if err != nil {
+						return eap.Authorization{}, err
+					}
+					if vlan > 0 {
+						var id int
+						if err = s.Row(ctx, "SELECT id FROM vlan_catalog WHERE id=?", vlan).Scan(&id); err != nil {
+							return eap.Authorization{}, err
+						}
+					}
+					return eap.Authorization{Identity: identity, VLAN: vlan}, nil
+				},
+			})
+			if err != nil {
+				return err
+			}
+			defer eapEngine.Close()
+		}
 		auth, err := net.ListenPacket("udp", authAddr)
 		if err != nil {
 			return err
@@ -215,7 +259,9 @@ func command() *cobra.Command {
 		defer cancel()
 		server := &http.Server{Handler: web.HandlerWithOptions(s, managedPKI, acmeClient, adminMTLS), TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		errors := make(chan error, 5)
-		starts := []func() error{func() error { return aaa.ServeAuthenticated(ctx, auth, s, workers, false, codesVerifier(codes)) }, func() error { return aaa.Serve(ctx, acct, s, workers, true) }, func() error { return server.Serve(tls.NewListener(listener, tlsConfig)) }}
+		starts := []func() error{func() error {
+			return aaa.ServeWithOptions(ctx, auth, s, workers, false, aaa.Options{Network: codesVerifier(codes), EAP: eapEngine})
+		}, func() error { return aaa.Serve(ctx, acct, s, workers, true) }, func() error { return server.Serve(tls.NewListener(listener, tlsConfig)) }}
 
 		extraServers := []*http.Server{}
 		if codes != nil && portalAddr != "" {
