@@ -20,7 +20,7 @@ func Transfer(ctx context.Context, source, target *Store) error {
 		return err
 	}
 	defer tx.Rollback()
-	tables := []string{"admins", "nas", "vlan_catalog", "mac_auth", "settings", "auth_log", "sessions", "identities", "user_codes", "certificate_authorities", "certificates", "guest_policy", "guest_challenges", "guest_sessions", "nas_grants", "device_fingerprints", "fingerprint_history", "oui_prefixes"}
+	tables := []string{"admins", "nas", "vlan_catalog", "mac_auth", "settings", "auth_log", "sessions", "identities", "user_codes", "certificate_authorities", "certificates", "guest_policy", "guest_challenges", "guest_sessions", "nas_grants", "device_fingerprints", "fingerprint_history", "oui_prefixes", "fingerprint_cache"}
 	for _, table := range tables {
 		var n int
 		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {

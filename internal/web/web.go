@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/rkislov/border/internal/aaa"
+	"github.com/rkislov/border/internal/auth"
+	"github.com/rkislov/border/internal/fingerbank"
 	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/pki"
 	"github.com/rkislov/border/internal/radprofile"
@@ -29,16 +31,17 @@ import (
 var assets embed.FS
 
 type app struct {
-	guest    *guest.Service
-	mu       sync.Mutex
-	sessions map[string]time.Time
-	attempts map[string]loginAttempt
-	s        *store.Store
-	csrf     string
-	t        *template.Template
-	slots    chan struct{}
-	pki      *pki.Manager
-	acme     *pki.ACME
+	guest      *guest.Service
+	fingerbank *fingerbank.Client
+	mu         sync.Mutex
+	sessions   map[string]time.Time
+	attempts   map[string]loginAttempt
+	s          *store.Store
+	csrf       string
+	t          *template.Template
+	slots      chan struct{}
+	pki        *pki.Manager
+	acme       *pki.ACME
 }
 
 func Handler(s *store.Store) http.Handler { return HandlerWithOptions(s, nil, nil, true) }
@@ -54,7 +57,13 @@ func HandlerWithOptions(s *store.Store, manager *pki.Manager, acme *pki.ACME, re
 	if len(guests) > 0 {
 		a.guest = guests[0]
 	}
+	var vault *auth.Vault
+	if a.guest != nil {
+		vault = a.guest.Vault
+	}
+	a.fingerbank = fingerbank.New(s, vault)
 	mux := http.NewServeMux()
+	a.fingerbankRoutes(mux)
 	a.guestRoutes(mux)
 	a.profileRoutes(mux)
 	a.fingerprintRoutes(mux)

@@ -30,6 +30,7 @@ async function load() {
   await loadGuest();
  await loadProfiles();
  await loadFingerprints();
+ await loadFingerbank();
   const eapResponse=await fetch('/api/eap');if(eapResponse.ok){const ep=await eapResponse.json();$('#eap-form').elements.Enabled.checked=ep.Enabled;$('#eap-form').elements.VLAN.value=ep.VLAN;$('#eap-status').textContent=ep.Available?'Используются управляемые CA из раздела сертификатов.':'Для EAP-TLS задайте BORDER_MASTER_KEY и перезапустите radiusd.';}
  } catch(e) { notice(e.message, true); }
 }
@@ -95,9 +96,13 @@ function renderFingerprints(){
  for(const f of rows){const b=document.createElement('button');b.textContent='Профиль '+f.MAC;b.onclick=async()=>{
  const form=$('#fingerprint-form');for(const k of ['MAC','NAS','DHCPOptions','VendorClass','Hostname','OS','Manufacturer','DeviceType'])form.elements[k].value=f[k];
  try{const r=await fetch('/api/fingerprints/history?mac='+encodeURIComponent(f.MAC));if(!r.ok)throw new Error(await r.text());const h=await r.json();table('#fingerprint-history',['Время','Источник','Изменение'],h.map(v=>[date(v.Time),v.Source,v.Detail]));}catch(e){notice(e.message,true);}
- };$('#fingerprint-actions').append(b);}
+ };$('#fingerprint-actions').append(b);const fb=document.createElement('button');fb.textContent='Fingerbank '+f.MAC;fb.onclick=()=>lookupFingerbank(f.MAC);$('#fingerprint-actions').append(fb);}
 }
 async function loadFingerprints(){try{const r=await fetch('/api/fingerprints');if(!r.ok)throw new Error(await r.text());fingerprints=await r.json();renderFingerprints();}catch(e){notice(e.message,true);}}
 $('#fingerprint-search').oninput=renderFingerprints;
 $('#fingerprint-form').onsubmit=async e=>{e.preventDefault();await mutate('/api/fingerprints',Object.fromEntries(new FormData(e.target)));};
 $('#oui-form').onsubmit=async e=>{e.preventDefault();await mutate('/api/fingerprints/oui',Object.fromEntries(new FormData(e.target)));};
+
+async function loadFingerbank(){try{const r=await fetch('/api/fingerbank/config');if(!r.ok)throw new Error(await r.text());const c=await r.json(),f=$('#fingerbank-form');f.elements.Enabled.checked=c.Enabled;f.elements.TTLHours.value=c.TTLHours;f.elements.Key.value='';$('#fingerbank-status').textContent=c.HasKey?'Ключ сохранён и скрыт.':'Ключ ещё не задан.';}catch(e){$('#fingerbank-status').textContent=e.message;}}
+$('#fingerbank-form').onsubmit=async e=>{e.preventDefault();const f=e.target;await mutate('/api/fingerbank/config',{Enabled:f.elements.Enabled.checked,Key:f.elements.Key.value,TTLHours:Number(f.elements.TTLHours.value)});};
+async function lookupFingerbank(mac){try{const r=await fetch('/api/fingerbank/lookup',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({MAC:mac})});if(!r.ok)throw new Error(await r.text());const v=await r.json(),n=$('#fingerbank-result');n.hidden=false;n.textContent=mac+': '+(v.NotFound?'Не определено':v.DeviceName+' · достоверность '+v.Score+'/100')+' · '+(v.Stale?'Устаревший кэш':v.Cached?'Из кэша':'Получено из API')+' · '+date(v.UpdatedAt);}catch(e){notice(e.message,true);}}
