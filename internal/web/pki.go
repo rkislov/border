@@ -30,7 +30,11 @@ func (a *app) pkiRoutes(mux *http.ServeMux) {
 			http.Error(w, "database unavailable", 503)
 			return
 		}
-		reply(w, map[string]any{"authorities": cas, "certificates": certs, "acme": a.acme.Config()})
+		var config pki.ACMEConfig
+		if a.acme != nil {
+			config = a.acme.Config()
+		}
+		reply(w, map[string]any{"authorities": cas, "certificates": certs, "acme": config, "ACMEAvailable": a.acme != nil})
 	})
 	mux.HandleFunc("POST /api/pki/ca", func(w http.ResponseWriter, r *http.Request) {
 		if !ready(w) {
@@ -102,6 +106,10 @@ func (a *app) pkiRoutes(mux *http.ServeMux) {
 		}
 		var v pki.ACMEConfig
 		if !decode(w, r, &v) {
+			return
+		}
+		if a.acme == nil {
+			http.Error(w, "HTTPS certificates are managed by the platform", 503)
 			return
 		}
 		if err := a.acme.Configure(r.Context(), v); err != nil {

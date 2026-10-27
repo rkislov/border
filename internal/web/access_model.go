@@ -1,0 +1,101 @@
+package web
+
+import (
+	"github.com/rkislov/border/internal/identitysource"
+	"github.com/rkislov/border/internal/store"
+	"net/http"
+	"strings"
+)
+
+func (a *app) accessRoutes(m *http.ServeMux) {
+	m.HandleFunc("GET /api/access-model", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		locations, err := a.s.NamedList(ctx, "locations")
+		if err != nil {
+			http.Error(w, "database unavailable", 503)
+			return
+		}
+		segments, err := a.s.NamedList(ctx, "network_segments")
+		if err != nil {
+			http.Error(w, "database unavailable", 503)
+			return
+		}
+		authentication, err := a.s.Authentications(ctx)
+		if err != nil {
+			http.Error(w, "database unavailable", 503)
+			return
+		}
+		access, err := a.s.Accesses(ctx)
+		if err != nil {
+			http.Error(w, "database unavailable", 503)
+			return
+		}
+		mappings, err := a.s.Mappings(ctx)
+		if err != nil {
+			http.Error(w, "database unavailable", 503)
+			return
+		}
+		domains, err := a.identities.Domains(ctx)
+		if err != nil {
+			http.Error(w, "domain configuration unavailable", 503)
+			return
+		}
+		users, err := a.identities.Locals(ctx)
+		if err != nil {
+			http.Error(w, "database unavailable", 503)
+			return
+		}
+		reply(w, map[string]any{"Locations": locations, "Segments": segments, "Authentication": authentication, "Access": access, "Mappings": mappings, "Domains": domains, "Users": users})
+	})
+	m.HandleFunc("POST /api/authentication-policies", func(w http.ResponseWriter, r *http.Request) {
+		var v store.AuthenticationPolicy
+		if !decode(w, r, &v) {
+			return
+		}
+		a.finish(w, r, a.s.SaveAuthentication(r.Context(), v), "save authentication policy")
+	})
+	m.HandleFunc("POST /api/access-policies", func(w http.ResponseWriter, r *http.Request) {
+		var v store.AccessPolicy
+		if !decode(w, r, &v) {
+			return
+		}
+		for i := range v.Subjects {
+			v.Subjects[i] = strings.ToLower(strings.TrimSpace(v.Subjects[i]))
+		}
+		a.finish(w, r, a.s.SaveAccess(r.Context(), v), "save access policy")
+	})
+	m.HandleFunc("POST /api/segment-mappings", func(w http.ResponseWriter, r *http.Request) {
+		var v store.SegmentMapping
+		if !decode(w, r, &v) {
+			return
+		}
+		a.finish(w, r, a.s.SaveMapping(r.Context(), v), "save location/NAS segment mapping")
+	})
+	for _, kind := range []string{"locations", "network_segments"} {
+		m.HandleFunc("POST /api/"+kind, func(w http.ResponseWriter, r *http.Request) {
+			var v store.Named
+			if !decode(w, r, &v) {
+				return
+			}
+			if !identitysource.IDPattern.MatchString(v.ID) || v.Name == "" || len(v.Name) > 100 {
+				http.Error(w, "ID and name required", 400)
+				return
+			}
+			a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO "+kind+"(id,name) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name", v.ID, v.Name), "save "+kind)
+		})
+	}
+	m.HandleFunc("POST /api/domains", func(w http.ResponseWriter, r *http.Request) {
+		var v identitysource.Domain
+		if !decode(w, r, &v) {
+			return
+		}
+		a.finish(w, r, a.identities.SaveDomain(r.Context(), v), "save encrypted domain connection")
+	})
+	m.HandleFunc("POST /api/local-users", func(w http.ResponseWriter, r *http.Request) {
+		var v identitysource.LocalUser
+		if !decode(w, r, &v) {
+			return
+		}
+		a.finish(w, r, a.identities.SaveLocal(r.Context(), v), "save local network user")
+	})
+}

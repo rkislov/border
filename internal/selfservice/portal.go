@@ -4,6 +4,7 @@ package selfservice
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -83,6 +84,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func (p *Portal) Handler() http.Handler {
 	mux := http.NewServeMux()
 	p.guestRoutes(mux)
+	p.pushRoutes(mux)
 	files, _ := fs.Sub(assets, "assets")
 	mux.Handle("GET /", http.FileServer(http.FS(files)))
 	mux.HandleFunc("GET /crl/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -312,6 +314,12 @@ func (p *Portal) protected(next func(http.ResponseWriter, *http.Request, session
 		}
 		if r.Method == "POST" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(s.CSRF)) != 1 {
 			http.Error(w, "invalid CSRF token", 403)
+			return
+		}
+		if active, ok := p.Auth.(interface {
+			Active(context.Context, string) bool
+		}); ok && strings.Contains(s.User.Username, "/") && !active.Active(r.Context(), s.User.Username) {
+			http.Error(w, "account disabled", 401)
 			return
 		}
 		next(w, r, s)

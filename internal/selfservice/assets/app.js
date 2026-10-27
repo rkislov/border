@@ -1,7 +1,9 @@
+const basePath=(location.pathname.match(/^\/(?:t|portal)\/[a-z][a-z0-9-]{0,31}(?=\/)/)||[''])[0];
+const scopedFetch=(path,options)=>fetch(basePath+path,options);
 'use strict';
 const $ = s => document.querySelector(s); let csrf = '', account;
 function notice(text,error=false){$('#notice').textContent=text;$('#notice').className=error?'error':'';$('#notice').hidden=false;}
-async function api(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{},body:data?JSON.stringify(data):undefined});if(!r.ok){if(r.status===401){$('#account').hidden=true;$('#login').hidden=false;$('#logout').hidden=true;}throw new Error(await r.text());}return r.json();}
+async function api(path,data){const r=await scopedFetch('/api/'+path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{},body:data?JSON.stringify(data):undefined});if(!r.ok){if(r.status===401){$('#account').hidden=true;$('#login').hidden=false;$('#logout').hidden=true;}throw new Error(await r.text());}return r.json();}
 function notification(r){return r.notification_sent===false?' Изменение выполнено, но уведомление не отправлено: обратитесь к администратору.':'';}
 function download(bundle){const blob=new Blob([bundle.PrivateKey+'\n'+bundle.Certificate+'\n'+bundle.CA],{type:'application/x-pem-file'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='border-'+bundle.Serial+'.pem';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function me(){account=await api('me');csrf=account.csrf;$('#username').textContent=account.username;$('#email').textContent=account.email;$('#totp-state').textContent=account.totp?'TOTP включён.':'TOTP ещё не настроен.';$('#account').hidden=false;$('#login').hidden=true;$('#logout').hidden=false;$('#ca').replaceChildren();account.authorities.forEach(c=>$('#ca').add(new Option(c.Name,c.ID)));const holder=$('#certificates');holder.replaceChildren();if(!account.certificates.length)holder.textContent='Сертификатов пока нет.';
@@ -17,3 +19,16 @@ $('#confirm-form').onsubmit=e=>{e.preventDefault();run(async()=>{const r=await a
 $('#recovery').onclick=()=>run(async()=>{if(!confirm('Перевыпустить коды? Предыдущие перестанут работать.'))return;showCodes(await api('recovery',{}));});
 $('#issue-form').onsubmit=e=>{e.preventDefault();run(async()=>{const r=await api('certificates/issue',Object.fromEntries(new FormData(e.target)));download(r.bundle);notice('Сертификат и ключ скачаны.'+notification(r));await me();});};
 me().catch(e=>{if(!e.message.includes('login required'))notice(e.message,true);});
+async function pushRegistration(){if(!('serviceWorker' in navigator)||!('PushManager' in window))throw new Error('Браузер не поддерживает push. На iPhone откройте установленное веб-приложение.');return navigator.serviceWorker.register(basePath+'/sw.js',{scope:basePath+'/'});}
+$('#push-enable').onclick=()=>run(async()=>{
+ const config=await api('push');if(!config.Enabled)throw new Error('Push-канал для вашего домена выключен.');
+ const permission=await Notification.requestPermission();if(permission!=='granted')throw new Error('Разрешение на уведомления не предоставлено.');
+ await pushRegistration();const registration=await navigator.serviceWorker.ready;
+ let sub=await registration.pushManager.getSubscription();
+ const key=Uint8Array.from(atob(config.PublicKey.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+ if(sub && btoa(String.fromCharCode(...new Uint8Array(sub.options.applicationServerKey))).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_')!==config.PublicKey){await sub.unsubscribe();sub=null;}
+ if(!sub)sub=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
+ const data=sub.toJSON();await api('push/subscribe',{Key:config.PublicKey,Subscription:{endpoint:data.endpoint,keys:data.keys}});notice('Уведомления подключены для этой учётной записи и браузера.');
+});
+$('#push-disable').onclick=()=>run(async()=>{const registration=await navigator.serviceWorker.getRegistration(basePath+'/');const sub=await registration?.pushManager.getSubscription();if(sub){await api('push/unsubscribe',{Endpoint:sub.endpoint});await sub.unsubscribe();}notice('Уведомления в этом браузере отключены.');});
+$('#push-test').onclick=()=>run(async()=>{await api('push/test',{});notice('Проверочное уведомление отправлено.');});

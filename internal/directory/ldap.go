@@ -20,6 +20,7 @@ import (
 type Identity struct {
 	Username string
 	Email    string
+	Phone    string
 }
 type Authenticator interface {
 	Authenticate(context.Context, string, string) (Identity, error)
@@ -93,7 +94,7 @@ func (l *LDAP) Authenticate(ctx context.Context, user, password string) (Identit
 		return Identity{}, fail
 	}
 	filter := "(" + l.UserAttribute + "=" + ldap.EscapeFilter(user) + ")"
-	result, err := conn.Search(ldap.NewSearchRequest(l.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, filter, []string{l.UserAttribute, "mail"}, nil))
+	result, err := conn.Search(ldap.NewSearchRequest(l.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, filter, []string{l.UserAttribute, "mail", "mobile"}, nil))
 	if err != nil || len(result.Entries) != 1 {
 		return Identity{}, fail
 	}
@@ -106,5 +107,5 @@ func (l *LDAP) Authenticate(ctx context.Context, user, password string) (Identit
 	if err = conn.Bind(entry.DN, password); err != nil {
 		return Identity{}, fail
 	}
-	return Identity{Username: canonical, Email: email}, nil
+	return Identity{Username: canonical, Email: email, Phone: entry.GetAttributeValue("mobile")}, nil
 }

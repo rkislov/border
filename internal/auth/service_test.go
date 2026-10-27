@@ -198,3 +198,36 @@ func TestConcurrentCodeUse(t *testing.T) {
 		t.Fatal("single-use failure", n)
 	}
 }
+
+func TestMFAOnlyDoesNotConsumeRecoveryOrEmail(t *testing.T) {
+	s, m := setup(t)
+	ctx := t.Context()
+	if e := s.EmailCode(ctx, "user"); e != nil {
+		t.Fatal(e)
+	}
+	code := strings.Split(strings.Split(m.body, "code: ")[1], "\n")[0]
+	if ok, e := s.VerifyTOTP(ctx, "user", code); ok || e != nil {
+		t.Fatal("email accepted as MFA", e)
+	}
+	if ok, e := s.Verify(ctx, "user", code); !ok || e != nil {
+		t.Fatal("email consumed by MFA rejection", e)
+	}
+	secret, _, e := s.Enrollment(ctx, "user")
+	if e != nil {
+		t.Fatal(e)
+	}
+	otp, _ := totp.GenerateCode(secret, time.Now())
+	if _, e = s.Confirm(ctx, "user", otp); e != nil {
+		t.Fatal(e)
+	}
+	recovery, e := s.Recovery(ctx, "user")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if ok, _ := s.VerifyTOTP(ctx, "user", recovery[0]); ok {
+		t.Fatal("recovery accepted as MFA")
+	}
+	if ok, e := s.Verify(ctx, "user", recovery[0]); !ok || e != nil {
+		t.Fatal("recovery consumed", e)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/rkislov/border/internal/eap"
 	"github.com/rkislov/border/internal/store"
@@ -40,6 +41,29 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 		peer = append(peer, value...)
 	}
 	reply := engine.Handle(ctx, string(peer), state, message)
+	bound, policyErr := s.BoundPolicy(ctx, host)
+	timeout := uint32(3600)
+	if reply.Accept && bound != nil {
+		timeout, policyErr = bound.Timeout(time.Now())
+		if policyErr == nil && (bound.Authentication.Source != "eap_tls" || !s.PolicySubject(ctx, bound.Access.ID, reply.Authorization.Identity)) {
+			policyErr = errors.New("identity not permitted by access policy")
+		}
+		if policyErr == nil {
+			reply.Authorization.VLAN = bound.VLAN
+		}
+	}
+	if reply.Accept && policyErr != nil {
+		clear(reply.Key)
+		reply.Accept = false
+		reply.Reject = true
+		reply.Reason = "access policy rejected"
+		id := byte(0)
+		if len(reply.Message) > 1 {
+			id = reply.Message[1]
+		}
+		reply.Message = []byte{4, id, 0, 4}
+	}
+
 	code := radius.CodeAccessChallenge
 	if reply.Accept {
 		code = radius.CodeAccessAccept
@@ -85,7 +109,7 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 				return nil, err
 			}
 		}
-		if err := rfc2865.SessionTimeout_Set(out, 3600); err != nil {
+		if err := rfc2865.SessionTimeout_Set(out, rfc2865.SessionTimeout(timeout)); err != nil {
 			return nil, err
 		}
 	}

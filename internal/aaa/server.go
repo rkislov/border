@@ -17,6 +17,7 @@ import (
 
 	"github.com/rkislov/border/internal/directory"
 	"github.com/rkislov/border/internal/eap"
+	"github.com/rkislov/border/internal/identitysource"
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
@@ -84,9 +85,12 @@ func Serve(ctx context.Context, conn net.PacketConn, s *store.Store, workers int
 }
 
 type Options struct {
-	Directory directory.Authenticator
-	Network   NetworkVerifier
-	EAP       *eap.Engine
+	Resolve    func(context.Context, string) (*store.Store, Options, error)
+	Identities *identitysource.Service
+	TOTP       TOTPVerifier
+	Directory  directory.Authenticator
+	Network    NetworkVerifier
+	EAP        *eap.Engine
 }
 
 func ServeAuthenticated(ctx context.Context, conn net.PacketConn, s *store.Store, workers int, accounting bool, verifier NetworkVerifier) error {
@@ -169,6 +173,14 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 	if err != nil {
 		return nil, err
 	}
+	if options.Resolve != nil {
+		resolved, next, e := options.Resolve(ctx, host)
+		if e != nil {
+			return nil, e
+		}
+		next.Resolve = nil
+		return ProcessWithOptions(ctx, resolved, raw, addr, accounting, next)
+	}
 	secret, err := s.Secret(ctx, host)
 	if err != nil || len(secret) < 16 {
 		return nil, errors.New("unknown NAS")
@@ -214,9 +226,6 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 	if err != nil {
 		return nil, errors.New("NAS profile unavailable")
 	}
-	if profile.Mode != "network" {
-		return processService(ctx, s, p, host, profile, options)
-	}
 	for _, a := range p.Attributes {
 		if a.Type == 26 {
 			vendor, data, e := radius.VendorSpecific(a.Attribute)
@@ -227,6 +236,16 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 	}
 	if len(p.Attributes.Get(3)) > 0 {
 		return nil, errors.New("CHAP is not supported")
+	}
+	bound, err := s.BoundPolicy(ctx, host)
+	if err != nil {
+		return nil, errors.New("access policy unavailable")
+	}
+	if bound != nil {
+		return processPolicy(ctx, s, p, host, profile, bound, options)
+	}
+	if profile.Mode != "network" {
+		return processService(ctx, s, p, host, profile, options)
 	}
 	decision := Decision{Reason: "EAP is not available in this version"}
 	identity := ""

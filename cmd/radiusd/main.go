@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,16 +25,19 @@ import (
 	"github.com/rkislov/border/internal/directory"
 	"github.com/rkislov/border/internal/eap"
 	"github.com/rkislov/border/internal/guest"
+	"github.com/rkislov/border/internal/identitysource"
 	"github.com/rkislov/border/internal/mail"
+	"github.com/rkislov/border/internal/notification"
 	"github.com/rkislov/border/internal/pki"
 	"github.com/rkislov/border/internal/selfservice"
 	"github.com/rkislov/border/internal/store"
+	"github.com/rkislov/border/internal/tenancy"
 	"github.com/rkislov/border/internal/web"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
-var version = "0.3.1-dev"
+var version = "0.4.0-dev"
 
 func main() {
 	if err := command().Execute(); err != nil {
@@ -128,7 +132,7 @@ func command() *cobra.Command {
 	cert.Flags().StringVar(&dir, "out", "certs", "Каталог сертификатов")
 	cert.Flags().StringVar(&host, "host", "localhost", "DNS-имя или IP сервера")
 	root.AddCommand(cert)
-	var httpAddr, authAddr, acctAddr, certDir, portalAddr, acmeHTTP, publicURL string
+	var httpAddr, authAddr, acctAddr, certDir, portalAddr, acmeHTTP, publicURL, tenantDir string
 	var workers int
 	var adminMTLS bool
 	serve := &cobra.Command{Use: "serve", Short: "Запустить RADIUS и HTTPS/mTLS-панель", Args: cobra.NoArgs, RunE: withStore(func(c *cobra.Command, s *store.Store) error {
@@ -149,12 +153,16 @@ func command() *cobra.Command {
 		var managedPKI *pki.Manager
 		var acmeClient *pki.ACME
 		var domain directory.Authenticator
+		var identities *identitysource.Service
+		var master []byte
 		if rawKey := os.Getenv("BORDER_MASTER_KEY"); rawKey != "" {
 			key, err := base64.StdEncoding.DecodeString(rawKey)
 			if err != nil {
 				return fmt.Errorf("BORDER_MASTER_KEY must be base64 encoded")
 			}
 			defer clear(key)
+			master = append([]byte(nil), key...)
+			defer clear(master)
 			sender, err := mail.FromEnv()
 			if err != nil {
 				return err
@@ -179,7 +187,17 @@ func command() *cobra.Command {
 				return err
 			}
 			defer guests.Close()
-			guests.PublicURL = publicURL
+			notifications := &notification.Service{Store: s, Vault: codes.Vault}
+			legacySMS, e := guests.Config(context.Background())
+			if e != nil {
+				return e
+			}
+			if e = notifications.Bootstrap(context.Background(), sender, legacySMS); e != nil {
+				return e
+			}
+			codes.Mail = notifications
+			guests.SenderForNAS = notifications.GuestSender
+			guests.PublicURL = strings.TrimSuffix(publicURL, "/") + "/portal/default"
 			guests.Reconnect = func(ctx context.Context, nas, id, mac string, vlan int) error {
 				var current store.Session
 				current.NAS = nas
@@ -220,6 +238,10 @@ func command() *cobra.Command {
 			}
 		} else if os.Getenv("BORDER_LDAP_URL") != "" || os.Getenv("BORDER_SMTP_ADDRESS") != "" {
 			return fmt.Errorf("LDAP/SMTP require BORDER_MASTER_KEY")
+		}
+		if codes != nil {
+			identities = &identitysource.Service{Store: s, Vault: codes.Vault, Legacy: domain}
+			domain = identities
 		}
 		var eapEngine *eap.Engine
 		if managedPKI != nil {
@@ -284,11 +306,29 @@ func command() *cobra.Command {
 		defer stop()
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		server := &http.Server{Handler: web.HandlerWithOptions(s, managedPKI, acmeClient, adminMTLS, guests), TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		rootOptions := aaa.Options{Network: codesVerifier(codes), EAP: eapEngine, Directory: domain, Identities: identities}
+		if codes != nil {
+			rootOptions.TOTP = codes
+		}
+		var adminHandler http.Handler = web.HandlerWithOptions(s, managedPKI, acmeClient, adminMTLS, guests)
+		var portalHandler http.Handler
+		if codes != nil {
+			portalHandler = selfservice.New(domain, codes, managedPKI, strings.TrimSuffix(publicURL, "/")+"/portal/default", guests).Handler()
+		}
+		if len(master) == 32 {
+			tenants := &tenancy.Manager{Root: s, RootOptions: rootOptions, Driver: driver, DSN: dsn, Directory: tenantDir, Key: append([]byte(nil), master...), Pair: tlsConfig.Certificates[0], RequireMTLS: adminMTLS, PublicURL: publicURL}
+			if err = tenants.Init(ctx); err != nil {
+				return err
+			}
+			defer tenants.Close()
+			adminHandler = tenants.Handler(web.HandlerPlatform(s, managedPKI, acmeClient, adminMTLS, tenants, guests), portalHandler)
+			rootOptions.Resolve = tenants.Resolve
+		}
+		server := &http.Server{Handler: adminHandler, TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		errors := make(chan error, 5)
 		starts := []func() error{func() error {
-			return aaa.ServeWithOptions(ctx, auth, s, workers, false, aaa.Options{Network: codesVerifier(codes), EAP: eapEngine, Directory: domain})
-		}, func() error { return aaa.Serve(ctx, acct, s, workers, true) }, func() error { return server.Serve(tls.NewListener(listener, tlsConfig)) }}
+			return aaa.ServeWithOptions(ctx, auth, s, workers, false, rootOptions)
+		}, func() error { return aaa.ServeWithOptions(ctx, acct, s, workers, true, rootOptions) }, func() error { return server.Serve(tls.NewListener(listener, tlsConfig)) }}
 
 		extraServers := []*http.Server{}
 		if codes != nil && portalAddr != "" {
@@ -300,7 +340,7 @@ func command() *cobra.Command {
 			portalTLS := tlsConfig.Clone()
 			portalTLS.ClientAuth = tls.NoClientCert
 			portalTLS.ClientCAs = nil
-			portalServer := &http.Server{Handler: selfservice.New(domain, codes, managedPKI, publicURL, guests).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+			portalServer := &http.Server{Handler: portalHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 			extraServers = append(extraServers, portalServer)
 			starts = append(starts, func() error { return portalServer.Serve(tls.NewListener(portalListener, portalTLS)) })
 		}
@@ -356,6 +396,7 @@ func command() *cobra.Command {
 	serve.Flags().IntVar(&workers, "workers", 256, "Число обработчиков на UDP-порт (1–1024)")
 	serve.Flags().StringVar(&portalAddr, "portal", "127.0.0.1:9443", "Отдельный HTTPS портал пользователей (при BORDER_MASTER_KEY)")
 	serve.Flags().StringVar(&acmeHTTP, "acme-http", "127.0.0.1:8080", "HTTP-01 listener; пробросьте публичный TCP 80 сюда")
+	serve.Flags().StringVar(&tenantDir, "tenant-dir", env("BORDER_TENANT_DIR", "tenants"), "Каталог изолированных SQLite баз тенантов")
 	serve.Flags().StringVar(&publicURL, "portal-url", os.Getenv("BORDER_PORTAL_URL"), "Публичный HTTPS URL портала для CRL")
 	serve.Flags().BoolVar(&adminMTLS, "admin-mtls", false, "Требовать клиентский сертификат дополнительно к паролю администратора")
 	root.AddCommand(serve)
