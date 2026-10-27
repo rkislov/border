@@ -45,7 +45,7 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 	timeout := uint32(3600)
 	if reply.Accept && bound != nil {
 		timeout, policyErr = bound.Timeout(time.Now())
-		if policyErr == nil && (bound.Authentication.Source != "eap_tls" || !s.PolicySubject(ctx, bound.Access.ID, reply.Authorization.Identity)) {
+		if policyErr == nil && (bound.Authentication.Source != "eap_tls" || bound.Access.Mode != "network" || !s.PolicySubject(ctx, bound.Access.ID, reply.Authorization.Identity)) {
 			policyErr = errors.New("identity not permitted by access policy")
 		}
 		if policyErr == nil {
@@ -88,6 +88,11 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 		out.Attributes.Add(24, reply.State)
 	}
 	if reply.Accept {
+		if bound != nil && bound.Access.IdleSeconds > 0 {
+			if err := rfc2865.IdleTimeout_Set(out, rfc2865.IdleTimeout(bound.Access.IdleSeconds)); err != nil {
+				return nil, err
+			}
+		}
 		defer clear(reply.Key)
 		if len(reply.Key) != 128 {
 			return nil, errors.New("invalid EAP key material")
