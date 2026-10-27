@@ -21,6 +21,7 @@ type Sender interface {
 type SMTP struct {
 	TLS                               *tls.Config
 	Address, Username, Password, From string
+	CAPEM                             string
 	ImplicitTLS                       bool
 }
 
@@ -37,6 +38,7 @@ func FromEnv() (*SMTP, error) {
 		return nil, fmt.Errorf("SMTP sender must be a valid address")
 	}
 	config := &tls.Config{MinVersion: tls.VersionTLS12}
+	var caPEM string
 	if path := os.Getenv("BORDER_SMTP_CA"); path != "" {
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -50,8 +52,9 @@ func FromEnv() (*SMTP, error) {
 			return nil, fmt.Errorf("invalid SMTP CA")
 		}
 		config.RootCAs = roots
+		caPEM = string(b)
 	}
-	return &SMTP{Address: addr, From: from, Username: os.Getenv("BORDER_SMTP_USERNAME"), Password: os.Getenv("BORDER_SMTP_PASSWORD"), ImplicitTLS: os.Getenv("BORDER_SMTP_TLS") == "implicit", TLS: config}, nil
+	return &SMTP{Address: addr, From: from, Username: os.Getenv("BORDER_SMTP_USERNAME"), Password: os.Getenv("BORDER_SMTP_PASSWORD"), CAPEM: caPEM, ImplicitTLS: os.Getenv("BORDER_SMTP_TLS") == "implicit", TLS: config}, nil
 }
 
 // Send never falls back to unencrypted delivery. Use port 465/implicit or

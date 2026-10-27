@@ -20,7 +20,14 @@ func Transfer(ctx context.Context, source, target *Store) error {
 		return err
 	}
 	defer tx.Rollback()
-	tables := []string{"admins", "nas", "vlan_catalog", "mac_auth", "settings", "auth_log", "sessions", "identities", "user_codes", "certificate_authorities", "certificates", "guest_policy", "guest_challenges", "guest_sessions", "nas_grants", "device_fingerprints", "fingerprint_history", "oui_prefixes", "fingerprint_cache"}
+	var tenantCount int
+	if err = source.Row(ctx, "SELECT COUNT(*) FROM tenant_instances").Scan(&tenantCount); err != nil {
+		return err
+	}
+	if tenantCount > 0 {
+		return fmt.Errorf("migrate each tenant database separately before transferring the platform catalog")
+	}
+	tables := []string{"admins", "vlan_catalog", "domains", "local_users", "locations", "network_segments", "authentication_policies", "access_policies", "policy_subjects", "nas", "location_segments", "nas_segments", "mac_auth", "settings", "auth_log", "sessions", "identities", "push_subscriptions", "user_codes", "certificate_authorities", "certificates", "guest_policy", "guest_challenges", "guest_sessions", "nas_grants", "device_fingerprints", "fingerprint_history", "oui_prefixes", "fingerprint_cache", "tenant_instances"}
 	for _, table := range tables {
 		var n int
 		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {

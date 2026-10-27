@@ -22,6 +22,8 @@ import (
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/fingerbank"
 	"github.com/rkislov/border/internal/guest"
+	"github.com/rkislov/border/internal/identitysource"
+	"github.com/rkislov/border/internal/notification"
 	"github.com/rkislov/border/internal/pki"
 	"github.com/rkislov/border/internal/radprofile"
 	"github.com/rkislov/border/internal/store"
@@ -31,17 +33,20 @@ import (
 var assets embed.FS
 
 type app struct {
-	guest      *guest.Service
-	fingerbank *fingerbank.Client
-	mu         sync.Mutex
-	sessions   map[string]time.Time
-	attempts   map[string]loginAttempt
-	s          *store.Store
-	csrf       string
-	t          *template.Template
-	slots      chan struct{}
-	pki        *pki.Manager
-	acme       *pki.ACME
+	guest         *guest.Service
+	fingerbank    *fingerbank.Client
+	identities    *identitysource.Service
+	platform      Platform
+	notifications *notification.Service
+	mu            sync.Mutex
+	sessions      map[string]time.Time
+	attempts      map[string]loginAttempt
+	s             *store.Store
+	csrf          string
+	t             *template.Template
+	slots         chan struct{}
+	pki           *pki.Manager
+	acme          *pki.ACME
 }
 
 func Handler(s *store.Store) http.Handler { return HandlerWithOptions(s, nil, nil, true) }
@@ -49,6 +54,13 @@ func HandlerWithPKI(s *store.Store, manager *pki.Manager, acme *pki.ACME) http.H
 	return HandlerWithOptions(s, manager, acme, true)
 }
 func HandlerWithOptions(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS bool, guests ...*guest.Service) http.Handler {
+	return handler(s, manager, acme, requireMTLS, nil, guests...)
+}
+func HandlerPlatform(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS bool, platform Platform, guests ...*guest.Service) http.Handler {
+	return handler(s, manager, acme, requireMTLS, platform, guests...)
+}
+func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS bool, platform Platform, guests ...*guest.Service) http.Handler {
+
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
@@ -62,8 +74,14 @@ func HandlerWithOptions(s *store.Store, manager *pki.Manager, acme *pki.ACME, re
 		vault = a.guest.Vault
 	}
 	a.fingerbank = fingerbank.New(s, vault)
+	a.identities = &identitysource.Service{Store: s, Vault: vault}
+	a.platform = platform
+	a.notifications = &notification.Service{Store: s, Vault: vault}
 	mux := http.NewServeMux()
+	a.tenantRoutes(mux)
 	a.fingerbankRoutes(mux)
+	a.accessRoutes(mux)
+	a.notificationRoutes(mux)
 	a.guestRoutes(mux)
 	a.profileRoutes(mux)
 	a.fingerprintRoutes(mux)
@@ -201,6 +219,7 @@ func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 	var v struct {
 		Address, Name, Secret        string
 		Dictionary, Mode, Credential string
+		LocationID, AccessPolicyID   string
 		CoAPort                      int
 		PortalEnabled                bool
 	}
@@ -232,11 +251,26 @@ func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := net.ParseIP(v.Address)
+	if ip != nil && v.Secret == "" {
+		_ = a.s.Row(r.Context(), "SELECT secret FROM nas WHERE address=?", ip.String()).Scan(&v.Secret)
+	}
 	if ip == nil || strings.TrimSpace(v.Name) == "" || len(v.Name) > 100 || len(v.Secret) < 16 || len(v.Secret) > 128 {
 		http.Error(w, "IP, имя и секрет 16–128 байт обязательны", 400)
 		return
 	}
-	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret,coa_port,portal_enabled,dictionary,access_mode,credential) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret,coa_port=excluded.coa_port,portal_enabled=excluded.portal_enabled,dictionary=excluded.dictionary,access_mode=excluded.access_mode,credential=excluded.credential", ip.String(), v.Name, v.Secret, v.CoAPort, boolInt(v.PortalEnabled), v.Dictionary, v.Mode, v.Credential), "save NAS")
+	var location, policy any
+	if v.LocationID != "" {
+		location = v.LocationID
+	}
+	if v.AccessPolicyID != "" {
+		policy = v.AccessPolicyID
+		var mode string
+		if err := a.s.Row(r.Context(), "SELECT mode FROM access_policies WHERE id=?", v.AccessPolicyID).Scan(&mode); err != nil || mode != v.Mode {
+			http.Error(w, "policy mode must match NAS", 400)
+			return
+		}
+	}
+	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret,coa_port,portal_enabled,dictionary,access_mode,credential,location_id,access_policy_id) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret,coa_port=excluded.coa_port,portal_enabled=excluded.portal_enabled,dictionary=excluded.dictionary,access_mode=excluded.access_mode,credential=excluded.credential,location_id=excluded.location_id,access_policy_id=excluded.access_policy_id", ip.String(), v.Name, v.Secret, v.CoAPort, boolInt(v.PortalEnabled), v.Dictionary, v.Mode, v.Credential, location, policy), "save NAS")
 }
 func (a *app) vlan(w http.ResponseWriter, r *http.Request) {
 	var v store.VLAN

@@ -43,7 +43,7 @@ func New(s *store.Store, key []byte, sender mail.Sender, vlan int) (*Service, er
 }
 func (s *Service) VLAN() int { return s.NetworkVLAN }
 func (s *Service) Register(ctx context.Context, i directory.Identity) error {
-	return s.Store.Exec(ctx, "INSERT INTO identities(username,email) VALUES (?,?) ON CONFLICT(username) DO UPDATE SET email=excluded.email,failures=0", i.Username, i.Email)
+	return s.Store.Exec(ctx, "INSERT INTO identities(username,email,phone) VALUES (?,?,?) ON CONFLICT(username) DO UPDATE SET email=excluded.email,phone=excluded.phone,failures=0", i.Username, i.Email, i.Phone)
 }
 func (s *Service) digest(user, code string) string {
 	m := hmac.New(sha256.New, s.digestKey)
@@ -57,6 +57,11 @@ func (s *Service) Notify(ctx context.Context, user, subject, body string) error 
 	var email string
 	if err := s.Store.Row(ctx, "SELECT email FROM identities WHERE username=?", user).Scan(&email); err != nil {
 		return err
+	}
+	if sender, ok := s.Mail.(interface {
+		Notify(context.Context, string, string, string, string) error
+	}); ok {
+		return sender.Notify(ctx, user, email, subject, body)
 	}
 	return s.Mail.Send(ctx, email, subject, body)
 }
@@ -96,7 +101,7 @@ func (s *Service) EmailCode(ctx context.Context, user string) error {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	if err = s.Notify(ctx, user, "Border network access code", "Your one-time network access code: "+code+"\nValid for 5 minutes. Do not share this code."); err != nil {
+	if err = s.deliverCode(ctx, user, "Border network access code", "Your one-time network access code: "+code+"\nValid for 5 minutes. Do not share this code."); err != nil {
 		_ = s.Store.Exec(ctx, "DELETE FROM user_codes WHERE digest=?", digest)
 		return fmt.Errorf("отправка не удалась; код аннулирован")
 	}
@@ -205,6 +210,17 @@ func totpStep(code, secret string, now time.Time) (int64, bool) {
 // Verify accepts one email code, one recovery code or a non-replayed TOTP.
 // Five failed attempts lock codes until a new successful domain login.
 func (s *Service) Verify(ctx context.Context, user, code string) (bool, error) {
+	return s.verify(ctx, user, code, false)
+}
+
+// VerifyTOTP requires the enrolled factor; email and recovery codes cannot satisfy MFA.
+func (s *Service) VerifyTOTP(ctx context.Context, user, code string) (bool, error) {
+	if len(code) != 6 {
+		return false, nil
+	}
+	return s.verify(ctx, user, code, true)
+}
+func (s *Service) verify(ctx context.Context, user, code string, totpOnly bool) (bool, error) {
 	user = strings.ToLower(user)
 	if len(user) > 200 || len(code) > 100 || code == "" {
 		return false, nil
@@ -217,19 +233,21 @@ func (s *Service) Verify(ctx context.Context, user, code string) (bool, error) {
 	if err != nil || n != 1 {
 		return false, err
 	}
-	r, err = s.Store.DB.ExecContext(ctx, s.Store.SQL("DELETE FROM user_codes WHERE username=? AND digest=? AND expires_at>?"), user, s.digest(user, code), time.Now().Unix())
-	if err != nil {
-		return false, err
-	}
-	n, err = r.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if n == 1 {
-		if err = s.Store.Exec(ctx, "UPDATE identities SET failures=0 WHERE username=?", user); err != nil {
+	if !totpOnly {
+		r, err = s.Store.DB.ExecContext(ctx, s.Store.SQL("DELETE FROM user_codes WHERE username=? AND digest=? AND expires_at>?"), user, s.digest(user, code), time.Now().Unix())
+		if err != nil {
 			return false, err
 		}
-		return true, nil
+		n, err = r.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		if n == 1 {
+			if err = s.Store.Exec(ctx, "UPDATE identities SET failures=0 WHERE username=?", user); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
 	}
 	var encrypted string
 	var last int64
@@ -254,4 +272,17 @@ func (s *Service) Verify(ctx context.Context, user, code string) (bool, error) {
 	}
 	n, err = r.RowsAffected()
 	return n == 1, err
+}
+
+func (s *Service) deliverCode(ctx context.Context, user, subject, body string) error {
+	var email string
+	if err := s.Store.Row(ctx, "SELECT email FROM identities WHERE username=?", user).Scan(&email); err != nil {
+		return err
+	}
+	if sender, ok := s.Mail.(interface {
+		SendForIdentity(context.Context, string, string, string, string) error
+	}); ok {
+		return sender.SendForIdentity(ctx, user, email, subject, body)
+	}
+	return s.Mail.Send(ctx, email, subject, body)
 }

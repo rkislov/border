@@ -22,15 +22,16 @@ import (
 )
 
 type Service struct {
-	PublicURL   string
-	Store       *store.Store
-	Vault       *auth.Vault
-	key         []byte
-	SMS         sms.SMSProvider
-	Reconnect   func(context.Context, string, string, string, int) error
-	mu          sync.Mutex
-	provider    *sms.HTTPProvider
-	fingerprint [32]byte
+	PublicURL    string
+	Store        *store.Store
+	Vault        *auth.Vault
+	key          []byte
+	SMS          sms.SMSProvider
+	SenderForNAS func(context.Context, string) (sms.SMSProvider, error)
+	Reconnect    func(context.Context, string, string, string, int) error
+	mu           sync.Mutex
+	provider     *sms.HTTPProvider
+	fingerprint  [32]byte
 }
 type Challenge struct {
 	ID          string
@@ -125,7 +126,14 @@ func (s *Service) sender(ctx context.Context) (sms.SMSProvider, error) {
 	s.fingerprint = fingerprint
 	return provider, nil
 }
-func (s *Service) Ready(ctx context.Context) bool { _, err := s.sender(ctx); return err == nil }
+func (s *Service) Ready(ctx context.Context) bool {
+	if s.SenderForNAS != nil {
+		_, err := s.SenderForNAS(ctx, "")
+		return err == nil
+	}
+	_, err := s.sender(ctx)
+	return err == nil
+}
 func (s *Service) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -170,7 +178,12 @@ func (s *Service) Request(ctx context.Context, token, rawPhone string) (Challeng
 	if err != nil {
 		return Challenge{}, err
 	}
-	sender, err := s.sender(ctx)
+	var sender sms.SMSProvider
+	if s.SenderForNAS != nil {
+		sender, err = s.SenderForNAS(ctx, r.NAS)
+	} else {
+		sender, err = s.sender(ctx)
+	}
 	if err != nil {
 		return Challenge{}, err
 	}
