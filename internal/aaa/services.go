@@ -30,8 +30,12 @@ func processService(ctx context.Context, s *store.Store, p *radius.Packet, host 
 			}
 		case "directory":
 			if o.Directory != nil {
-				_, err = o.Directory.Authenticate(ctx, user, password)
+				identity, authErr := o.Directory.Authenticate(ctx, user, password)
+				err = authErr
 				valid = err == nil
+				if valid {
+					user = identity.Username
+				}
 			}
 		}
 		valid = valid && err == nil
