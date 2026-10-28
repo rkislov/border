@@ -187,3 +187,30 @@ func TestRevocationDiagnosticsAndGenerationCAS(t *testing.T) {
 		t.Fatal("old result affected new generation")
 	}
 }
+func TestAccountingStartInRestartSecond(t *testing.T) {
+	s := ruleStore(t)
+	ctx := t.Context()
+	now := time.Now().Unix()
+	if e := s.ApplyAccounting(ctx, AccountingEvent{NAS: "nas", Kind: "on", At: now, Timed: true}); e != nil {
+		t.Fatal(e)
+	}
+	token, e := s.NewAccessGrant(ctx, "nas", "user", "access", now+3600)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.ApplyAccounting(ctx, AccountingEvent{NAS: "nas", ID: "fresh", Kind: "start", At: now, Timed: true, Classes: []string{token}}); e != nil {
+		t.Fatal(e)
+	}
+	rows, e := s.Sessions(ctx)
+	if e != nil || len(rows) != 1 || rows[0].Status != "active" {
+		t.Fatal(rows, e)
+	}
+	// A repeated On with the same timestamp must not close this fresh session.
+	if e = s.ApplyAccounting(ctx, AccountingEvent{NAS: "nas", Kind: "on", At: now, Timed: true}); e != nil {
+		t.Fatal(e)
+	}
+	rows, _ = s.Sessions(ctx)
+	if rows[0].Status != "active" {
+		t.Fatal("duplicate On closed fresh session")
+	}
+}
