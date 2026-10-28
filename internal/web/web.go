@@ -147,7 +147,11 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, 16384)
+		limit := int64(16384)
+		if r.URL.Path == "/api/access-rules" {
+			limit = 131072
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		if r.Method != "GET" && r.Method != "HEAD" {
 			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(a.csrf)) != 1 {
 				http.Error(w, "invalid CSRF token", 403)

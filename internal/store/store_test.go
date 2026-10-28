@@ -109,6 +109,18 @@ func TestTransferToPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err = src.SaveAuthentication(ctx, AuthenticationPolicy{ID: "groups-auth", Name: "Groups", Source: "local", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err = src.SaveAccess(ctx, AccessPolicy{ID: "groups-access", Name: "Groups", AuthenticationID: "groups-auth", Mode: "ssh", SessionSeconds: 300, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err = src.SaveUserGroup(ctx, UserGroup{ID: "staff", Name: "Staff", Enabled: true, Members: []string{"local/alice"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = src.SaveRules(ctx, RuleSet{PolicyID: "groups-access", Enabled: true, Rules: []AccessRule{{ID: "staff", Name: "Staff", Effect: "allow", Priority: 10, Enabled: true, Groups: []string{"staff"}}}}); err != nil {
+		t.Fatal(err)
+	}
 	dst, err := Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +131,20 @@ func TestTransferToPostgres(t *testing.T) {
 	}
 	if err = Transfer(ctx, src, dst); err != nil {
 		t.Fatal(err)
+	}
+	rules, err := dst.Rules(ctx, "groups-access")
+	if err != nil || !rules.Enabled || len(rules.Rules) != 1 {
+		t.Fatal("rules transfer", err)
+	}
+	b := &BoundPolicy{Rules: rules}
+	if ok, _, err := dst.EvaluateAccess(ctx, b, AccessContext{Username: "local/alice"}); err != nil || !ok {
+		t.Fatal("group membership transfer", err)
+	}
+	if err = dst.SaveRules(ctx, rules); err != nil {
+		t.Fatal("PostgreSQL rule save", err)
+	}
+	if err = dst.SaveRules(ctx, rules); err == nil {
+		t.Fatal("PostgreSQL version conflict not detected")
 	}
 	if g, err := dst.NASGrant(ctx, "192.0.2.1", "user", "ssh"); err != nil || g.Privilege != 3 {
 		t.Fatalf("grant transfer: %+v %v", g, err)

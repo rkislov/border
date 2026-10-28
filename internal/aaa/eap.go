@@ -45,8 +45,14 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 	timeout := uint32(3600)
 	if reply.Accept && bound != nil {
 		timeout, policyErr = bound.Timeout(time.Now())
-		if policyErr == nil && (bound.Authentication.Source != "eap_tls" || bound.Access.Mode != "network" || !s.PolicySubject(ctx, bound.Access.ID, reply.Authorization.Identity)) {
+		if policyErr == nil && (bound.Authentication.Source != "eap_tls" || bound.Access.Mode != "network") {
 			policyErr = errors.New("identity not permitted by access policy")
+		}
+		if policyErr == nil {
+			allowed, _, e := evaluatePolicy(ctx, s, p, host, reply.Authorization.Identity, nil, bound)
+			if e != nil || !allowed {
+				policyErr = errors.New("access rule rejected")
+			}
 		}
 		if policyErr == nil {
 			reply.Authorization.VLAN = bound.VLAN

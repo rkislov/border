@@ -29,6 +29,7 @@ type BoundPolicy struct {
 	Authentication AuthenticationPolicy
 	Access         AccessPolicy
 	VLAN           int
+	Rules          RuleSet
 }
 
 func (s *Store) BoundPolicy(ctx context.Context, nas string) (*BoundPolicy, error) {
@@ -43,6 +44,10 @@ func (s *Store) BoundPolicy(ctx context.Context, nas string) (*BoundPolicy, erro
 	a, b := &p.Access, &p.Authentication
 	var segment, domain sql.NullString
 	err := s.Row(ctx, "SELECT p.id,p.name,p.authentication_id,p.mode,p.segment_id,p.valid_from,p.valid_until,p.session_seconds,p.idle_seconds,p.privilege,p.group_name,p.role,p.filter_id,p.enabled,a.id,a.name,a.source,a.domain_id,a.require_totp,a.enabled FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", id.String).Scan(&a.ID, &a.Name, &a.AuthenticationID, &a.Mode, &segment, &a.ValidFrom, &a.ValidUntil, &a.SessionSeconds, &a.IdleSeconds, &a.Privilege, &a.Group, &a.Role, &a.Filter, &a.Enabled, &b.ID, &b.Name, &b.Source, &domain, &b.RequireTOTP, &b.Enabled)
+	if err != nil {
+		return nil, err
+	}
+	p.Rules, err = s.Rules(ctx, a.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -133,8 +138,8 @@ func (s *Store) SaveAccess(ctx context.Context, a AccessPolicy) error {
 	} else if a.SegmentID != "" {
 		return fmt.Errorf("VLAN segment only applies to network access")
 	}
-	if len(a.Subjects) == 0 || len(a.Subjects) > 1000 {
-		return fmt.Errorf("explicit identities required (1–1000)")
+	if len(a.Subjects) > 1000 {
+		return fmt.Errorf("maximum 1000 explicit identities")
 	}
 	var source string
 	if err := s.Row(ctx, "SELECT source FROM authentication_policies WHERE id=?", a.AuthenticationID).Scan(&source); err != nil {

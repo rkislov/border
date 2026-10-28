@@ -102,3 +102,35 @@ func TestBoundLocalMFAValidityLocationAndNoFallback(t *testing.T) {
 		t.Fatal("expired policy allowed")
 	}
 }
+
+func TestRuleConditionsAppliedToActualRadiusRequest(t *testing.T) {
+	s := database(t)
+	ctx := t.Context()
+	codes, _ := auth.New(s, make([]byte, 32), nil, 0)
+	identities := &identitysource.Service{Store: s, Vault: codes.Vault}
+	identities.SaveLocal(ctx, identitysource.LocalUser{Username: "alice", Password: "test-password-12345", Enabled: true})
+	s.SaveAuthentication(ctx, store.AuthenticationPolicy{ID: "local", Name: "Local", Source: "local", Enabled: true})
+	s.SaveAccess(ctx, store.AccessPolicy{ID: "ssh", Name: "SSH", AuthenticationID: "local", Mode: "ssh", SessionSeconds: 600, Enabled: true})
+	s.Exec(ctx, "UPDATE nas SET access_policy_id='ssh',access_mode='ssh'")
+	s.SaveUserGroup(ctx, store.UserGroup{ID: "staff", Name: "Staff", Enabled: true, Members: []string{"local/alice"}})
+	if e := s.SaveRules(ctx, store.RuleSet{PolicyID: "ssh", Enabled: true, Rules: []store.AccessRule{{ID: "office", Name: "Office", Enabled: true, Priority: 10, Effect: "allow", Groups: []string{"staff"}, SSIDs: []string{"Corp"}}}}); e != nil {
+		t.Fatal(e)
+	}
+	for _, test := range []struct {
+		called, password string
+		want             radius.Code
+	}{{"00-11-22-33-44-55:Corp", "test-password-12345", radius.CodeAccessAccept}, {"00-11-22-33-44-55:Guest", "test-password-12345", radius.CodeAccessReject}, {"Corp", "test-password-12345", radius.CodeAccessReject}, {"00-11-22-33-44-55:Corp", "incorrect", radius.CodeAccessReject}} {
+		p := request(t, "aa:bb:cc:dd:ee:ff")
+		rfc2865.UserName_SetString(p, "alice")
+		rfc2865.UserPassword_SetString(p, test.password)
+		rfc2865.CalledStationID_SetString(p, test.called)
+		raw, e := ProcessWithOptions(ctx, s, wire(t, p), source(), false, Options{Identities: identities})
+		if e != nil {
+			t.Fatal(e)
+		}
+		out, e := radius.Parse(raw, []byte(testSecret))
+		if e != nil || out.Code != test.want {
+			t.Fatal(test, out, e)
+		}
+	}
+}
