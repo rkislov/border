@@ -100,6 +100,32 @@ func checkStore(t *testing.T, s *Store) {
 	if err != nil || len(devices) != 1 || !devices[0].Active {
 		t.Fatal("devices")
 	}
+	if e = s.Exec(ctx, "INSERT INTO nas(address,name,secret) VALUES('192.0.2.22','Chain NAS','secret')"); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.SaveAuthentication(ctx, AuthenticationPolicy{ID: "chain-auth", Name: "Chain", Source: "local", Enabled: true, Steps: []string{"device", "primary", "totp"}}); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.SaveAccess(ctx, AccessPolicy{ID: "chain-access", Name: "Chain", AuthenticationID: "chain-auth", Mode: "ssh", SessionSeconds: 300, Enabled: true}); e != nil {
+		t.Fatal(e)
+	}
+	set := NASPolicySet{NAS: "192.0.2.22", Enabled: true, Bindings: []PolicyBinding{{ID: "chain", PolicyID: "chain-access", Protocol: "pap", Priority: 1, Enabled: true}}}
+	if e = s.SaveNASPolicies(ctx, set); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.SaveNASPolicies(ctx, set); e == nil {
+		t.Fatal("stale version accepted")
+	}
+	policy, configured, e := s.SelectPolicy(ctx, set.NAS, PolicyRequest{Protocol: "pap"})
+	if e != nil || !configured || policy.BindingVersion != 1 || len(policy.Authentication.Chain()) != 3 {
+		t.Fatal(policy, e)
+	}
+	if _, e = s.NewPolicyGrant(ctx, set.NAS, "local/user", policy, 9999999999); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.RefreshRevocations(ctx); e != nil {
+		t.Fatal(e)
+	}
 }
 func TestTransferToPostgres(t *testing.T) {
 	dsn := os.Getenv("BORDER_TEST_TRANSFER")
@@ -152,6 +178,10 @@ func TestTransferToPostgres(t *testing.T) {
 	}
 	if err = Transfer(ctx, src, dst); err != nil {
 		t.Fatal(err)
+	}
+	chain, configured, e := dst.SelectPolicy(ctx, "192.0.2.22", PolicyRequest{Protocol: "pap"})
+	if e != nil || !configured || len(chain.Authentication.Chain()) != 3 {
+		t.Fatal("chain transfer", e)
 	}
 	rules, err := dst.Rules(ctx, "groups-access")
 	if err != nil || !rules.Enabled || len(rules.Rules) != 1 {

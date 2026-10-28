@@ -35,10 +35,11 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 		{"domains", `{"ID":"corp","Name":"AD","Enabled":true,"Endpoints":["ldaps://corp.example.test"],"BaseDN":"dc=corp","BindDN":"cn=reader","BindPassword":"secret-ldap-password","UserAttribute":"uid"}`},
 		{"local-users", `{"Username":"alice","Password":"local-password-123","Email":"alice@example.test","Enabled":true}`},
 		{"locations", `{"ID":"office","Name":"Office"}`}, {"network_segments", `{"ID":"staff","Name":"Staff"}`},
-		{"authentication-policies", `{"ID":"mfa","Name":"MFA","Source":"directory","DomainID":"corp","RequireTOTP":true,"Enabled":true}`},
+		{"authentication-policies", `{"ID":"mfa","Name":"MFA","Source":"directory","DomainID":"corp","RequireTOTP":true,"Steps":["device","primary","totp"],"Enabled":true}`},
 		{"access-policies", `{"ID":"staff","Name":"Staff","AuthenticationID":"mfa","Mode":"network","SegmentID":"staff","SessionSeconds":3600,"Enabled":true,"Subjects":["corp/alice"]}`},
 		{"segment-mappings", `{"LocationID":"office","SegmentID":"staff","VLAN":200}`},
 		{"nas", `{"Address":"192.0.2.1","Name":"NAS","Secret":"nas-secret-123456789","LocationID":"office","AccessPolicyID":"staff"}`},
+		{"nas-policies", `{"NAS":"192.0.2.1","Version":0,"Enabled":true,"Bindings":[{"ID":"corp","PolicyID":"staff","Priority":100,"Protocol":"pap","IdentitySource":"corp","Enabled":true}]}`},
 		{"user-groups", `{"ID":"staff","Name":"Staff","Enabled":true,"Members":["corp/alice"]}`},
 		{"access-rules", `{"PolicyID":"staff","Version":0,"Enabled":true,"Rules":[{"ID":"staff","Name":"Staff","Enabled":true,"Effect":"allow","Priority":10,"Groups":["staff"]}]}`},
 		{"notifications", `{"Scope":"corp","SMTP":{"Mode":"custom","Address":"smtp.example.test:465","From":"border@example.test","Username":"sender","Password":"secret-smtp-password"},"SMS":{"Mode":"disabled"},"Push":{"Mode":"custom","Contact":"admin@example.test"}}`},
@@ -50,7 +51,7 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 			t.Fatal(v.path, w.Code, w.Body.String())
 		}
 	}
-	for _, path := range []string{"/api/access-model", "/api/notifications?scope=corp"} {
+	for _, path := range []string{"/api/access-model", "/api/notifications?scope=corp", "/api/nas-policies?nas=192.0.2.1"} {
 		w := send("GET", path, "", "")
 		if w.Code != 200 || strings.Contains(w.Body.String(), "secret-") || strings.Contains(w.Body.String(), "local-password") {
 			t.Fatal("secret leakage", path, w.Code)

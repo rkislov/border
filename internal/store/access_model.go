@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"github.com/rkislov/border/internal/radprofile"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 type AuthenticationPolicy struct {
 	ID, Name, Source, DomainID string
 	RequireTOTP, Enabled       bool
+	Steps                      []string
 }
 type AccessPolicy struct {
 	ID, Name, AuthenticationID, Mode, SegmentID string
@@ -26,6 +28,8 @@ type AccessPolicy struct {
 	Subjects                                    []string
 }
 type BoundPolicy struct {
+	BindingID      string
+	BindingVersion int64
 	Authentication AuthenticationPolicy
 	Access         AccessPolicy
 	VLAN           int
@@ -40,11 +44,25 @@ func (s *Store) BoundPolicy(ctx context.Context, nas string) (*BoundPolicy, erro
 	if !id.Valid {
 		return nil, nil
 	}
+	return s.policyForNAS(ctx, nas, id.String)
+}
+func (s *Store) policyForNAS(ctx context.Context, nas, id string) (*BoundPolicy, error) {
+	var location sql.NullString
+	if err := s.Row(ctx, "SELECT location_id FROM nas WHERE address=?", nas).Scan(&location); err != nil {
+		return nil, err
+	}
 	p := &BoundPolicy{}
 	a, b := &p.Access, &p.Authentication
 	var segment, domain sql.NullString
-	err := s.Row(ctx, "SELECT p.id,p.name,p.authentication_id,p.mode,p.segment_id,p.valid_from,p.valid_until,p.session_seconds,p.idle_seconds,p.privilege,p.group_name,p.role,p.filter_id,p.enabled,a.id,a.name,a.source,a.domain_id,a.require_totp,a.enabled FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", id.String).Scan(&a.ID, &a.Name, &a.AuthenticationID, &a.Mode, &segment, &a.ValidFrom, &a.ValidUntil, &a.SessionSeconds, &a.IdleSeconds, &a.Privilege, &a.Group, &a.Role, &a.Filter, &a.Enabled, &b.ID, &b.Name, &b.Source, &domain, &b.RequireTOTP, &b.Enabled)
+	var steps string
+	err := s.Row(ctx, "SELECT p.id,p.name,p.authentication_id,p.mode,p.segment_id,p.valid_from,p.valid_until,p.session_seconds,p.idle_seconds,p.privilege,p.group_name,p.role,p.filter_id,p.enabled,a.id,a.name,a.source,a.domain_id,a.require_totp,a.enabled,a.steps FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", id).Scan(&a.ID, &a.Name, &a.AuthenticationID, &a.Mode, &segment, &a.ValidFrom, &a.ValidUntil, &a.SessionSeconds, &a.IdleSeconds, &a.Privilege, &a.Group, &a.Role, &a.Filter, &a.Enabled, &b.ID, &b.Name, &b.Source, &domain, &b.RequireTOTP, &b.Enabled, &steps)
 	if err != nil {
+		return nil, err
+	}
+	if err = json.Unmarshal([]byte(steps), &b.Steps); err != nil {
+		return nil, err
+	}
+	if err = b.ValidateChain(); err != nil {
 		return nil, err
 	}
 	p.Rules, err = s.Rules(ctx, a.ID)
@@ -96,6 +114,17 @@ func (s *Store) SaveAuthentication(ctx context.Context, a AuthenticationPolicy) 
 	default:
 		return fmt.Errorf("invalid authentication source")
 	}
+	if err := a.ValidateChain(); err != nil {
+		return err
+	}
+	a.Steps = a.Chain()
+	a.RequireTOTP = false
+	for _, step := range a.Steps {
+		if step == "totp" {
+			a.RequireTOTP = true
+		}
+	}
+	steps, _ := json.Marshal(a.Steps)
 	if a.RequireTOTP && a.Source != "local" && a.Source != "directory" {
 		return fmt.Errorf("TOTP requires local or directory password")
 	}
@@ -108,7 +137,7 @@ func (s *Store) SaveAuthentication(ctx context.Context, a AuthenticationPolicy) 
 	} else if a.DomainID != "" {
 		return fmt.Errorf("domain only applies to directory authentication")
 	}
-	return s.Exec(ctx, "INSERT INTO authentication_policies(id,name,source,domain_id,require_totp,enabled) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,source=excluded.source,domain_id=excluded.domain_id,require_totp=excluded.require_totp,enabled=excluded.enabled", a.ID, a.Name, a.Source, domain, integer(a.RequireTOTP), integer(a.Enabled))
+	return s.Exec(ctx, "INSERT INTO authentication_policies(id,name,source,domain_id,require_totp,enabled,steps) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,source=excluded.source,domain_id=excluded.domain_id,require_totp=excluded.require_totp,enabled=excluded.enabled,steps=excluded.steps", a.ID, a.Name, a.Source, domain, integer(a.RequireTOTP), integer(a.Enabled), string(steps))
 }
 func integer(b bool) int {
 	if b {
@@ -171,7 +200,7 @@ func (s *Store) SaveAccess(ctx context.Context, a AccessPolicy) error {
 	return tx.Commit()
 }
 func (s *Store) Authentications(ctx context.Context) ([]AuthenticationPolicy, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT id,name,source,COALESCE(domain_id,''),require_totp,enabled FROM authentication_policies ORDER BY name")
+	rows, err := s.DB.QueryContext(ctx, "SELECT id,name,source,COALESCE(domain_id,''),require_totp,enabled,steps FROM authentication_policies ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +208,11 @@ func (s *Store) Authentications(ctx context.Context) ([]AuthenticationPolicy, er
 	out := []AuthenticationPolicy{}
 	for rows.Next() {
 		var a AuthenticationPolicy
-		if err = rows.Scan(&a.ID, &a.Name, &a.Source, &a.DomainID, &a.RequireTOTP, &a.Enabled); err != nil {
+		var steps string
+		if err = rows.Scan(&a.ID, &a.Name, &a.Source, &a.DomainID, &a.RequireTOTP, &a.Enabled, &steps); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal([]byte(steps), &a.Steps); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

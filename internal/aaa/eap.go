@@ -5,8 +5,11 @@ package aaa
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -17,7 +20,7 @@ import (
 	"layeh.com/radius/rfc2868"
 )
 
-func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host string, engine *eap.Engine) ([]byte, error) {
+func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host string, engine *eap.Engine, selected ...*store.BoundPolicy) ([]byte, error) {
 	var message, state []byte
 	var states int
 	for _, a := range p.Attributes {
@@ -40,11 +43,30 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 		peer = binary.BigEndian.AppendUint16(peer, uint16(len(value)))
 		peer = append(peer, value...)
 	}
+	var bound *store.BoundPolicy
+	var policyErr error
+	if len(selected) > 0 {
+		bound = selected[0]
+	} else {
+		bound, policyErr = s.BoundPolicy(ctx, host)
+	}
+	if bound != nil {
+		encoded, _ := json.Marshal(bound)
+		digest := sha256.Sum256(encoded)
+		peer = append(peer, digest[:]...)
+	}
 	reply := engine.Handle(ctx, string(peer), state, message)
-	bound, policyErr := s.BoundPolicy(ctx, host)
+	if reply.Accept {
+		current, configured, e := selectPolicy(ctx, s, p, host)
+		if e != nil || configured && current == nil || !reflect.DeepEqual(current, bound) {
+			policyErr = errors.New("policy changed during EAP")
+		}
+	}
 	timeout := uint32(3600)
 	if reply.Accept && bound != nil {
-		timeout, policyErr = bound.Timeout(time.Now())
+		if policyErr == nil {
+			timeout, policyErr = bound.Timeout(time.Now())
+		}
 		if policyErr == nil && (bound.Authentication.Source != "eap_tls" || bound.Access.Mode != "network") {
 			policyErr = errors.New("identity not permitted by access policy")
 		}
@@ -52,6 +74,13 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 			allowed, _, e := evaluatePolicy(ctx, s, p, host, reply.Authorization.Identity, nil, bound)
 			if e != nil || !allowed {
 				policyErr = errors.New("access rule rejected")
+			}
+		}
+		if policyErr == nil {
+			for _, step := range bound.Authentication.Chain() {
+				if step == "device" && !registeredDevice(ctx, s, p) {
+					policyErr = errors.New("device step rejected")
+				}
 			}
 		}
 		if policyErr == nil {
@@ -130,11 +159,8 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 		}
 	}
 	if reply.Accept {
-		policy := ""
-		if bound != nil {
-			policy = bound.Access.ID
-		}
-		token, e := s.NewAccessGrant(ctx, host, reply.Authorization.Identity, policy, time.Now().Unix()+int64(timeout))
+
+		token, e := s.NewPolicyGrant(ctx, host, reply.Authorization.Identity, bound, time.Now().Unix()+int64(timeout))
 		if e != nil {
 			return nil, e
 		}
