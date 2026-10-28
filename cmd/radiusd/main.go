@@ -37,7 +37,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.5.0-dev"
+var version = "0.5.1-dev"
 
 func main() {
 	if err := command().Execute(); err != nil {
