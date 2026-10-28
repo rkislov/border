@@ -11,6 +11,7 @@ import (
 )
 
 type AccountingEvent struct {
+	Input, Output                     *TrafficCounter
 	NAS, ID, MAC, Username, Kind, Key string
 	Classes                           []string
 	At, Seconds                       int64
@@ -95,7 +96,9 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 	}
 	var oldToken, oldStatus, oldMAC, oldUser, generation string
 	var last, started, seconds int64
-	err = tx.QueryRowContext(ctx, s.SQL("SELECT grant_token,status,mac,username,generation,event_at,started_at,session_seconds FROM sessions WHERE nas=? AND session_id=?"), e.NAS, e.ID).Scan(&oldToken, &oldStatus, &oldMAC, &oldUser, &generation, &last, &started, &seconds)
+	var input, output, trafficWarning string
+	var inputWide, outputWide bool
+	err = tx.QueryRowContext(ctx, s.SQL("SELECT grant_token,status,mac,username,generation,event_at,started_at,session_seconds,input_bytes,output_bytes,input_gigawords,output_gigawords,traffic_warning FROM sessions WHERE nas=? AND session_id=?"), e.NAS, e.ID).Scan(&oldToken, &oldStatus, &oldMAC, &oldUser, &generation, &last, &started, &seconds, &input, &output, &inputWide, &outputWide, &trafficWarning)
 	exists := err == nil
 	if err != nil && err != sql.ErrNoRows {
 		return err
@@ -172,12 +175,34 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 			e.Seconds = seconds
 		}
 	}
+	if newGeneration {
+		input = ""
+		output = ""
+		inputWide = false
+		outputWide = false
+		trafficWarning = ""
+	}
+	var inputBack, outputBack bool
+	input, inputWide, inputBack, err = mergeTraffic(input, inputWide, e.Input)
+	if err != nil {
+		return err
+	}
+	output, outputWide, outputBack, err = mergeTraffic(output, outputWide, e.Output)
+	if err != nil {
+		return err
+	}
+	if inputBack || outputBack {
+		trafficWarning = "counter moved backwards"
+	}
 	status := "active"
 	if e.Kind == "stop" {
 		status = "stopped"
 	}
 	if err = exec(`INSERT INTO sessions(nas,session_id,mac,username,status,updated_at,grant_token,generation,event_at,started_at,session_seconds,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
  ON CONFLICT(nas,session_id) DO UPDATE SET mac=excluded.mac,username=excluded.username,status=excluded.status,updated_at=excluded.updated_at,grant_token=excluded.grant_token,generation=excluded.generation,event_at=excluded.event_at,started_at=excluded.started_at,session_seconds=excluded.session_seconds,last_seen=excluded.last_seen`, e.NAS, e.ID, e.MAC, e.Username, status, now, token, generation, e.At, started, e.Seconds, min(e.At, now)); err != nil {
+		return err
+	}
+	if err = exec("UPDATE sessions SET input_bytes=?,output_bytes=?,input_gigawords=?,output_gigawords=?,traffic_warning=? WHERE nas=? AND session_id=?", input, output, integer(inputWide), integer(outputWide), trafficWarning, e.NAS, e.ID); err != nil {
 		return err
 	}
 	if newGeneration {

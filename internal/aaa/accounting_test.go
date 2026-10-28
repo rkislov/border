@@ -57,3 +57,47 @@ func TestAccountingRetryFingerprintAndValidation(t *testing.T) {
 		t.Fatal("duplicate counter accepted")
 	}
 }
+
+func TestAccountingTrafficParsing(t *testing.T) {
+	packet := func() *radius.Packet {
+		p := radius.New(radius.CodeAccountingRequest, []byte(testSecret))
+		rfc2866.AcctSessionID_SetString(p, "traffic")
+		p.Attributes.Add(40, binary.BigEndian.AppendUint32(nil, 3))
+		return p
+	}
+	p := packet()
+	for _, a := range []struct {
+		kind  radius.Type
+		value uint32
+	}{{42, 0xffffffff}, {52, 0xffffffff}, {43, 0}} {
+		p.Attributes.Add(a.kind, binary.BigEndian.AppendUint32(nil, a.value))
+	}
+	e, err := accountingEvent(p, "nas")
+	if err != nil || e.Input == nil || e.Input.Bytes != ^uint64(0) || !e.Input.Gigawords || e.Output == nil || e.Output.Bytes != 0 || e.Output.Gigawords {
+		t.Fatal(e, err)
+	}
+	key := e.Key
+	p.Attributes.Set(43, binary.BigEndian.AppendUint32(nil, 1))
+	e, err = accountingEvent(p, "nas")
+	if err != nil || e.Key == key {
+		t.Fatal("counter change deduplicated", err)
+	}
+	for _, kind := range []radius.Type{42, 43, 52, 53} {
+		p = packet()
+		p.Attributes.Add(kind, []byte{1})
+		if _, err = accountingEvent(p, "nas"); err == nil {
+			t.Fatal("short integer", kind)
+		}
+		p = packet()
+		p.Attributes.Add(kind, []byte{0, 0, 0, 1})
+		p.Attributes.Add(kind, []byte{0, 0, 0, 1})
+		if _, err = accountingEvent(p, "nas"); err == nil {
+			t.Fatal("duplicate", kind)
+		}
+	}
+	p = packet()
+	p.Attributes.Add(52, []byte{0, 0, 0, 1})
+	if _, err = accountingEvent(p, "nas"); err == nil {
+		t.Fatal("missing octets accepted")
+	}
+}
