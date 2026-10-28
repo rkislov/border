@@ -48,6 +48,8 @@ type Event struct {
 	Source, Identity, Result, Reason string
 }
 type Session struct {
+	InputBytes, OutputBytes, TrafficWarning         string
+	InputGigawords, OutputGigawords                 bool
 	NAS, ID, MAC, Username, Status                  string
 	Updated                                         int64
 	GrantToken                                      string `json:"-"`
@@ -282,7 +284,7 @@ func (s *Store) Events(ctx context.Context) ([]Event, error) {
 	return out, rows.Err()
 }
 func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT s.nas,s.session_id,s.mac,s.username,s.status,s.updated_at,COALESCE(g.reason,''),s.revoke_attempts,s.generation,s.last_seen,s.event_at,s.started_at,s.session_seconds,s.revoke_next,s.revoke_last,s.revoke_cause,s.revoke_response,s.revoke_error FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas ORDER BY s.updated_at DESC LIMIT 200")
+	rows, err := s.DB.QueryContext(ctx, "SELECT s.nas,s.session_id,s.mac,s.username,s.status,s.updated_at,COALESCE(g.reason,''),s.revoke_attempts,s.generation,s.last_seen,s.event_at,s.started_at,s.session_seconds,s.revoke_next,s.revoke_last,s.revoke_cause,s.revoke_response,s.revoke_error,s.input_bytes,s.output_bytes,s.input_gigawords,s.output_gigawords,s.traffic_warning FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas ORDER BY s.updated_at DESC LIMIT 200")
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +292,7 @@ func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
 	out := []Session{}
 	for rows.Next() {
 		var v Session
-		if err = rows.Scan(&v.NAS, &v.ID, &v.MAC, &v.Username, &v.Status, &v.Updated, &v.RevocationReason, &v.RevocationAttempts, &v.Generation, &v.LastSeen, &v.EventAt, &v.StartedAt, &v.SessionSeconds, &v.RevocationNext, &v.RevocationLast, &v.RevocationCause, &v.RevocationResponse, &v.RevocationError); err != nil {
+		if err = rows.Scan(&v.NAS, &v.ID, &v.MAC, &v.Username, &v.Status, &v.Updated, &v.RevocationReason, &v.RevocationAttempts, &v.Generation, &v.LastSeen, &v.EventAt, &v.StartedAt, &v.SessionSeconds, &v.RevocationNext, &v.RevocationLast, &v.RevocationCause, &v.RevocationResponse, &v.RevocationError, &v.InputBytes, &v.OutputBytes, &v.InputGigawords, &v.OutputGigawords, &v.TrafficWarning); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
