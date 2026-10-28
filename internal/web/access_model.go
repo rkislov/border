@@ -8,6 +8,7 @@ import (
 )
 
 func (a *app) accessRoutes(m *http.ServeMux) {
+	a.retentionRoutes(m)
 	m.HandleFunc("POST /api/policy-diagnostic", a.policyDiagnostic)
 	m.HandleFunc("GET /api/access-model", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()

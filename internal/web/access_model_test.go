@@ -83,6 +83,28 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 	if err != nil || len(nas) != 1 || nas[0].InterimSeconds != 600 || nas[0].StaleSeconds != 1800 {
 		t.Fatal(nas, err)
 	}
+	for _, path := range []string{"/api/retention", "/api/retention/preview"} {
+		if w := send("POST", path, `{"AuditDays":7}`, ""); w.Code != 403 {
+			t.Fatal("retention CSRF", w.Code)
+		}
+		if w := send("POST", path, `{"AuditDays":1}`, csrf); w.Code != 400 {
+			t.Fatal("retention validation", w.Code)
+		}
+	}
+	if w := send("POST", "/api/retention/preview", `{"AuditDays":7,"SessionDays":7}`, csrf); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	retention, err := s.Retention(t.Context())
+	if err != nil || retention.AuditDays != 0 || retention.SessionDays != 0 {
+		t.Fatal("preview changed settings", retention, err)
+	}
+	if w := send("POST", "/api/retention", `{"AuditDays":7,"SessionDays":30,"LastRun":9999999999}`, csrf); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	retention, err = s.Retention(t.Context())
+	if err != nil || retention.AuditDays != 7 || retention.SessionDays != 30 || retention.LastRun != 0 {
+		t.Fatal(retention, err)
+	}
 	// Diagnostics are authenticated, CSRF protected, and do not issue access.
 	body := `{"NAS":"192.0.2.1","Protocol":"pap","Username":"corp/alice"}`
 	if w := send("POST", "/api/policy-diagnostic", body, ""); w.Code != 403 {
