@@ -63,7 +63,9 @@ func processService(ctx context.Context, s *store.Store, p *radius.Packet, host 
 			return nil, e
 		}
 		out.Attributes.Add(25, []byte(token))
-		out.Attributes.Add(85, []byte{0, 0, 1, 44})
+		if err := setAccountingInterval(ctx, s, host, out); err != nil {
+			return nil, err
+		}
 	}
 	for _, a := range p.Attributes {
 		if a.Type == 33 {

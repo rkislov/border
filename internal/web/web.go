@@ -5,6 +5,7 @@ package web
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"database/sql"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -221,6 +222,7 @@ func (a *app) state(w http.ResponseWriter, r *http.Request) {
 }
 func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 	var v struct {
+		InterimSeconds, StaleSeconds *int
 		Address, Name, Secret        string
 		Dictionary, Mode, Credential string
 		LocationID, AccessPolicyID   string
@@ -262,6 +264,21 @@ func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "IP, имя и секрет 16–128 байт обязательны", 400)
 		return
 	}
+	interim, stale := 300, 900
+	if err := a.s.Row(r.Context(), "SELECT interim_seconds,stale_seconds FROM nas WHERE address=?", ip.String()).Scan(&interim, &stale); err != nil && err != sql.ErrNoRows {
+		http.Error(w, "NAS settings unavailable", 503)
+		return
+	}
+	if v.InterimSeconds != nil {
+		interim = *v.InterimSeconds
+	}
+	if v.StaleSeconds != nil {
+		stale = *v.StaleSeconds
+	}
+	if interim < 60 || interim > 86400 || stale < interim*3 || stale > 604800 {
+		http.Error(w, "interim: 60–86400 seconds; stale: at least 3 interim intervals and at most 604800 seconds", 400)
+		return
+	}
 	var location, policy any
 	if v.LocationID != "" {
 		location = v.LocationID
@@ -274,7 +291,7 @@ func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret,coa_port,portal_enabled,dictionary,access_mode,credential,location_id,access_policy_id) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret,coa_port=excluded.coa_port,portal_enabled=excluded.portal_enabled,dictionary=excluded.dictionary,access_mode=excluded.access_mode,credential=excluded.credential,location_id=excluded.location_id,access_policy_id=excluded.access_policy_id", ip.String(), v.Name, v.Secret, v.CoAPort, boolInt(v.PortalEnabled), v.Dictionary, v.Mode, v.Credential, location, policy), "save NAS")
+	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret,coa_port,portal_enabled,dictionary,access_mode,credential,location_id,access_policy_id,interim_seconds,stale_seconds) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret,coa_port=excluded.coa_port,portal_enabled=excluded.portal_enabled,dictionary=excluded.dictionary,access_mode=excluded.access_mode,credential=excluded.credential,location_id=excluded.location_id,access_policy_id=excluded.access_policy_id,interim_seconds=excluded.interim_seconds,stale_seconds=excluded.stale_seconds", ip.String(), v.Name, v.Secret, v.CoAPort, boolInt(v.PortalEnabled), v.Dictionary, v.Mode, v.Credential, location, policy, interim, stale), "save NAS")
 }
 func (a *app) vlan(w http.ResponseWriter, r *http.Request) {
 	var v store.VLAN

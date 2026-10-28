@@ -27,6 +27,7 @@ type Store struct {
 	Driver string
 }
 type NAS struct {
+	InterimSeconds, StaleSeconds int
 	Address, Name                string
 	Dictionary, Mode, Credential string
 	LocationID, AccessPolicyID   string
@@ -217,7 +218,7 @@ func (s *Store) Accounting(ctx context.Context, source, id, mac, user, status st
 }
 
 func (s *Store) NASList(ctx context.Context) ([]NAS, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT address,name,coa_port,portal_enabled,dictionary,access_mode,credential,COALESCE(location_id,''),COALESCE(access_policy_id,'') FROM nas ORDER BY name")
+	rows, err := s.DB.QueryContext(ctx, "SELECT address,name,coa_port,portal_enabled,dictionary,access_mode,credential,COALESCE(location_id,''),COALESCE(access_policy_id,''),interim_seconds,stale_seconds FROM nas ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +226,7 @@ func (s *Store) NASList(ctx context.Context) ([]NAS, error) {
 	out := []NAS{}
 	for rows.Next() {
 		var v NAS
-		if err = rows.Scan(&v.Address, &v.Name, &v.CoAPort, &v.PortalEnabled, &v.Dictionary, &v.Mode, &v.Credential, &v.LocationID, &v.AccessPolicyID); err != nil {
+		if err = rows.Scan(&v.Address, &v.Name, &v.CoAPort, &v.PortalEnabled, &v.Dictionary, &v.Mode, &v.Credential, &v.LocationID, &v.AccessPolicyID, &v.InterimSeconds, &v.StaleSeconds); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

@@ -214,3 +214,43 @@ func TestAccountingStartInRestartSecond(t *testing.T) {
 		t.Fatal("duplicate On closed fresh session")
 	}
 }
+
+func TestPerNASStaleThresholds(t *testing.T) {
+	s := ruleStore(t)
+	ctx := t.Context()
+	now := time.Now().Unix()
+	for _, n := range []struct {
+		ip              string
+		interval, stale int
+	}{{"192.0.2.1", 60, 180}, {"192.0.2.2", 600, 1800}} {
+		if err := s.Exec(ctx, "INSERT INTO nas(address,name,secret,interim_seconds,stale_seconds) VALUES(?,?,?,?,?)", n.ip, "NAS", "secret", n.interval, n.stale); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ApplyAccounting(ctx, AccountingEvent{NAS: n.ip, ID: "s", Kind: "start", At: now - 600, Timed: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.MarkStaleSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.Sessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range list {
+		want := "active"
+		if session.NAS == "192.0.2.1" {
+			want = "stale"
+		}
+		if session.Status != want {
+			t.Fatal(session)
+		}
+	}
+	if err := s.ApplyAccounting(ctx, AccountingEvent{NAS: "192.0.2.1", ID: "s", Kind: "interim", At: now, Timed: true}); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := s.Row(ctx, "SELECT status FROM sessions WHERE nas='192.0.2.1'").Scan(&status); err != nil || status != "active" {
+		t.Fatal(status, err)
+	}
+}

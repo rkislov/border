@@ -61,6 +61,28 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 	if w := send("GET", "/api/access-model", "", ""); !strings.Contains(w.Body.String(), `"RevokeMissingUsers":true`) {
 		t.Fatal("missing user setting not persisted")
 	}
+	// Interval edits validate the pair and preserve omitted fields for old clients.
+	for _, body := range []string{
+		`{"Address":"192.0.2.1","Name":"NAS","InterimSeconds":59,"StaleSeconds":900}`,
+		`{"Address":"192.0.2.1","Name":"NAS","InterimSeconds":600,"StaleSeconds":900}`,
+		`{"Address":"192.0.2.1","Name":"NAS","InterimSeconds":86401,"StaleSeconds":604800}`,
+	} {
+		if w := send("POST", "/api/nas", body, csrf); w.Code != 400 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	for _, body := range []string{
+		`{"Address":"192.0.2.1","Name":"NAS","LocationID":"office","AccessPolicyID":"staff","InterimSeconds":600,"StaleSeconds":1800}`,
+		`{"Address":"192.0.2.1","Name":"NAS","LocationID":"office","AccessPolicyID":"staff"}`,
+	} {
+		if w := send("POST", "/api/nas", body, csrf); w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	nas, err := s.NASList(t.Context())
+	if err != nil || len(nas) != 1 || nas[0].InterimSeconds != 600 || nas[0].StaleSeconds != 1800 {
+		t.Fatal(nas, err)
+	}
 	// Diagnostics are authenticated, CSRF protected, and do not issue access.
 	body := `{"NAS":"192.0.2.1","Protocol":"pap","Username":"corp/alice"}`
 	if w := send("POST", "/api/policy-diagnostic", body, ""); w.Code != 403 {
