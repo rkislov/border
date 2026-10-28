@@ -14,6 +14,25 @@ func StartRevocations(parent context.Context, s *store.Store, syncStatus ...func
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 	statusDone := make(chan struct{})
+	retentionDone := make(chan struct{})
+	go func() {
+		defer close(retentionDone)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			run, cancelRun := context.WithTimeout(ctx, 10*time.Second)
+			err := s.PruneHistory(run, time.Now())
+			cancelRun()
+			if err != nil && ctx.Err() == nil {
+				slog.Error("history cleanup failed", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	go func() {
 		defer close(statusDone)
 		ticker := time.NewTicker(10 * time.Second)
@@ -47,7 +66,7 @@ func StartRevocations(parent context.Context, s *store.Store, syncStatus ...func
 			}
 		}
 	}()
-	return func() { cancel(); <-done; <-statusDone }
+	return func() { cancel(); <-done; <-statusDone; <-retentionDone }
 }
 func RevokeSessions(ctx context.Context, s *store.Store) error {
 	if err := s.MarkStaleSessions(ctx); err != nil {

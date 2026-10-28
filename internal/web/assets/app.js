@@ -39,6 +39,7 @@ async function load() {
  await loadFingerbank();
  await loadAccessModel();
  await loadTenants();
+ await loadRetention();
   const eapResponse=await scopedFetch('/api/eap');if(eapResponse.ok){const ep=await eapResponse.json();$('#eap-form').elements.Enabled.checked=ep.Enabled;$('#eap-form').elements.VLAN.value=ep.VLAN;$('#eap-status').textContent=ep.Available?'Используются управляемые CA из раздела сертификатов.':'Для EAP-TLS задайте BORDER_MASTER_KEY и перезапустите radiusd.';}
  } catch(e) { notice(e.message, true); }
 }
@@ -213,3 +214,10 @@ $('#diagnostic-form').onsubmit=async e=>{
 
 function trafficBytes(value){if(value===undefined || value==='')return 'Нет данных';const bytes=BigInt(value),units=['Б','КиБ','МиБ','ГиБ','ТиБ','ПиБ','ЭиБ'];let unit=0,scale=1n;while(unit<units.length-1 && bytes>=scale*1024n){scale*=1024n;unit++;}const hundredths=bytes*100n/scale;return unit===0?bytes+' Б':(hundredths/100n)+','+String(hundredths%100n).padStart(2,'0')+' '+units[unit]+' ('+bytes+' Б)';}
 function trafficNote(s){const notes=[];if(s.InputBytes!==undefined && s.InputBytes!=='' && !s.InputGigawords)notes.push('Вход: 32 бита');if(s.OutputBytes!==undefined && s.OutputBytes!=='' && !s.OutputGigawords)notes.push('Выход: 32 бита');if(s.TrafficWarning)notes.push('Счётчик уменьшился: сохранён предыдущий максимум');return notes.join(' · ')||'—';}
+
+let retentionPreviewRequest=0;
+function retentionInput(){const data=Object.fromEntries(new FormData($('#retention-form')));return {AuditDays:Number(data.AuditDays),SessionDays:Number(data.SessionDays)};}
+async function loadRetention(){const r=await scopedFetch('/api/retention');if(!r.ok)throw new Error('Не удалось загрузить сроки хранения');const p=await r.json();const f=$('#retention-form');f.elements.AuditDays.value=p.AuditDays;f.elements.SessionDays.value=p.SessionDays;retentionPreviewRequest++;$('#retention-preview-result').hidden=true;$('#retention-status').textContent=(p.AuditDays||p.SessionDays?'Автоочистка включена.':'Автоочистка выключена.')+(p.LastRun?' Последний проход: '+date(p.LastRun)+'. Удалено событий: '+p.LastAuditDeleted+', сессий: '+p.LastSessionsDeleted+'.':' После сохранения настроек проходов ещё не было.');}
+$('#retention-form').oninput=()=>{retentionPreviewRequest++;$('#retention-preview-result').hidden=true;};
+$('#retention-form').onsubmit=async e=>{e.preventDefault();await mutate('/api/retention',retentionInput());};
+$('#retention-preview').onclick=async()=>{if(!$('#retention-form').reportValidity())return;const request=++retentionPreviewRequest;$('#retention-preview-result').hidden=true;try{const r=await scopedFetch('/api/retention/preview',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(retentionInput())});if(!r.ok)throw new Error(await r.text());const p=await r.json();if(request!==retentionPreviewRequest)return;$('#retention-preview-result').textContent='По введённым срокам сейчас подлежат очистке: событий — '+p.AuditEvents+', сессий — '+p.ClosedSessions+'. Оценка ничего не меняет; для включения автоочистки сохраните сроки.';$('#retention-preview-result').hidden=false;}catch(e){if(request===retentionPreviewRequest)notice(e.message,true);}};

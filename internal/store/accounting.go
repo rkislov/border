@@ -103,6 +103,17 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
+	if !exists {
+		err = tx.QueryRowContext(ctx, s.SQL("SELECT grant_token,generation,event_at FROM session_tombstones WHERE nas=? AND session_id=?"), e.NAS, e.ID).Scan(&oldToken, &generation, &last)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == nil {
+			exists = true
+			oldStatus = "retained"
+			started = last
+		}
+	}
 	newGeneration := !exists
 	if exists {
 		if e.At < last {
@@ -203,6 +214,9 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 		return err
 	}
 	if err = exec("UPDATE sessions SET input_bytes=?,output_bytes=?,input_gigawords=?,output_gigawords=?,traffic_warning=? WHERE nas=? AND session_id=?", input, output, integer(inputWide), integer(outputWide), trafficWarning, e.NAS, e.ID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, s.SQL("DELETE FROM session_tombstones WHERE nas=? AND session_id=?"), e.NAS, e.ID); err != nil {
 		return err
 	}
 	if newGeneration {
