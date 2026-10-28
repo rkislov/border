@@ -70,7 +70,7 @@ func (s *Store) RefreshRevocations(ctx context.Context) error {
  WHEN EXISTS(SELECT 1 FROM domains d WHERE d.enabled=0 AND substr(access_grants.username,1,length(d.id)+1)=d.id || '/') THEN 'domain disabled'
  WHEN EXISTS(SELECT 1 FROM access_policies p WHERE p.id=access_grants.policy_id AND p.valid_until>0 AND p.valid_until<=?) THEN 'policy expired'
  WHEN expires_at<=? THEN 'session expired' ELSE 'policy unavailable' END,next_attempt=0 WHERE reason='' AND (
- expires_at<=? OR username IN (SELECT username FROM identity_status WHERE blocked=1) OR username IN (SELECT 'local/' || username FROM local_users WHERE enabled=0)
+ expires_at<=? OR (binding_version>0 AND NOT EXISTS(SELECT 1 FROM nas_policy_sets ns WHERE ns.nas=access_grants.nas AND ns.enabled=1 AND ns.version=access_grants.binding_version)) OR (binding_version=0 AND EXISTS(SELECT 1 FROM nas_policy_sets ns WHERE ns.nas=access_grants.nas AND ns.enabled=1)) OR username IN (SELECT username FROM identity_status WHERE blocked=1) OR username IN (SELECT 'local/' || username FROM local_users WHERE enabled=0)
  OR EXISTS(SELECT 1 FROM domains d WHERE d.enabled=0 AND substr(access_grants.username,1,length(d.id)+1)=d.id || '/')
  OR (policy_id<>'' AND NOT EXISTS(SELECT 1 FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=access_grants.policy_id AND p.enabled=1 AND a.enabled=1 AND (p.valid_until=0 OR p.valid_until>?) AND (p.valid_from=0 OR p.valid_from<=?))))`, now, now, now, now, now)
 }

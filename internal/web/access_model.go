@@ -61,6 +61,21 @@ func (a *app) accessRoutes(m *http.ServeMux) {
 		}
 		reply(w, map[string]any{"Groups": groups, "RuleSets": rules, "Locations": locations, "Segments": segments, "Authentication": authentication, "Access": access, "Mappings": mappings, "Domains": domains, "Users": users})
 	})
+	m.HandleFunc("GET /api/nas-policies", func(w http.ResponseWriter, r *http.Request) {
+		set, err := a.s.NASPolicies(r.Context(), r.URL.Query().Get("nas"))
+		if err != nil {
+			http.Error(w, "configuration unavailable", 503)
+			return
+		}
+		reply(w, set)
+	})
+	m.HandleFunc("POST /api/nas-policies", func(w http.ResponseWriter, r *http.Request) {
+		var set store.NASPolicySet
+		if !decode(w, r, &set) {
+			return
+		}
+		a.finish(w, r, a.s.SaveNASPolicies(r.Context(), set), "save NAS policy bindings")
+	})
 	m.HandleFunc("POST /api/user-groups", func(w http.ResponseWriter, r *http.Request) {
 		var g store.UserGroup
 		if !decode(w, r, &g) {

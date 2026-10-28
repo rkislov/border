@@ -225,12 +225,30 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 	if len(p.Attributes.Get(3)) > 0 {
 		return nil, errors.New("CHAP is not supported")
 	}
-	bound, err := s.BoundPolicy(ctx, host)
+	bound, configured, err := selectPolicy(ctx, s, p, host)
 	if err != nil {
 		return nil, errors.New("access policy unavailable")
 	}
 	if bound != nil {
 		return processPolicy(ctx, s, p, host, profile, bound, options)
+	}
+	if configured {
+		out := p.Response(radius.CodeAccessReject)
+		for _, a := range p.Attributes {
+			if a.Type == 33 {
+				out.Attributes.Add(33, a.Attribute)
+			}
+		}
+		if msg := p.Attributes.Get(79); len(msg) > 1 {
+			out.Attributes.Add(79, []byte{4, msg[1], 0, 4})
+		}
+		if err = s.Audit(ctx, host, rfc2865.UserName_GetString(p), "Access-Reject", "no NAS policy selector matched"); err != nil {
+			return nil, err
+		}
+		if err = SignMessageAuthenticator(out); err != nil {
+			return nil, err
+		}
+		return out.Encode()
 	}
 	if profile.Mode != "network" {
 		return processService(ctx, s, p, host, profile, options)
