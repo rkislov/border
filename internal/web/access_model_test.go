@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/store"
 	"net/http/httptest"
@@ -56,6 +57,44 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 		if w.Code != 200 || strings.Contains(w.Body.String(), "secret-") || strings.Contains(w.Body.String(), "local-password") {
 			t.Fatal("secret leakage", path, w.Code)
 		}
+	}
+	// Diagnostics are authenticated, CSRF protected, and do not issue access.
+	body := `{"NAS":"192.0.2.1","Protocol":"pap","Username":"corp/alice"}`
+	if w := send("POST", "/api/policy-diagnostic", body, ""); w.Code != 403 {
+		t.Fatal("diagnostic CSRF", w.Code)
+	}
+	w := send("POST", "/api/policy-diagnostic", body, csrf)
+	var diagnostic struct {
+		Status   string
+		PolicyID string
+		VLAN     int
+		Steps    []string
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &diagnostic) != nil || diagnostic.Status != "selected" || diagnostic.PolicyID != "staff" || diagnostic.VLAN != 200 || len(diagnostic.Steps) != 3 {
+		t.Fatal("diagnostic", w.Code, w.Body.String())
+	}
+	for _, tc := range []struct {
+		body string
+		code int
+	}{
+		{`{"NAS":"192.0.2.99","Protocol":"pap"}`, 404},
+		{`{"NAS":"192.0.2.1","Protocol":"invalid"}`, 400},
+		{`{"NAS":"192.0.2.1","Protocol":"pap","NASPortType":-1}`, 400},
+	} {
+		if w := send("POST", "/api/policy-diagnostic", tc.body, csrf); w.Code != tc.code {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	if err := s.Exec(t.Context(), "UPDATE access_policies SET valid_until=1 WHERE id='staff'"); err != nil {
+		t.Fatal(err)
+	}
+	w = send("POST", "/api/policy-diagnostic", body, csrf)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"Status":"inactive"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var grants int
+	if err := s.Row(t.Context(), "SELECT COUNT(*) FROM access_grants").Scan(&grants); err != nil || grants != 0 {
+		t.Fatal("diagnostic created grant", grants, err)
 	}
 	b, e := s.BoundPolicy(t.Context(), "192.0.2.1")
 	if e != nil || b.VLAN != 200 || b.Authentication.DomainID != "corp" {
