@@ -124,8 +124,17 @@ async function lookupFingerbank(mac){try{const r=await scopedFetch('/api/fingerb
 function fillForm(id,data){if(id==='#authentication-form' && !data.Steps?.length)data={...data,Steps:data.RequireTOTP?['primary','totp']:['primary']};const form=$(id);for(const [key,value] of Object.entries(data)){const input=form.elements[key];if(!input)continue;if(input.type==='checkbox')input.checked=!!value;else if(input.type==='datetime-local')input.value=value?new Date(value*1000-new Date(value*1000).getTimezoneOffset()*60000).toISOString().slice(0,16):'';else input.value=Array.isArray(value)?value.join('\n'):(value??'');}form.scrollIntoView({behavior:'smooth',block:'start'});}
 function editableTable(target,heads,items,columns,form){table(target,heads,items.map(columns));for(const item of items){const b=document.createElement('button');b.type='button';b.textContent='Изменить '+(item.Name||item.Username||item.ID||((item.NAS||item.LocationID)+" / "+item.SegmentID));b.onclick=()=>fillForm(form,item);$(target).append(b);}}
 function selectItems(selector,items){document.querySelectorAll(selector).forEach(s=>{const old=s.value,first=s.options[0]?.value===''?s.options[0].cloneNode(true):null;s.replaceChildren();if(first)s.add(first);items.forEach(v=>s.add(new Option(v.Name+' · '+v.ID,v.ID)));if([...s.options].some(o=>o.value===old))s.value=old;});}
+function renderSetup(model){
+ $('#setup-scope').textContent=basePath?'Текущий тенант: '+basePath.split('/')[2]+'. Все переходы сохраняют эту область настройки.':'Область: основной тенант. Другие тенанты открываются из раздела «Тенанты».';
+ $('#setup-infrastructure').textContent='Расположений: '+model.Locations.length+' · Сегментов: '+model.Segments.length+' · Сопоставлений VLAN: '+model.Mappings.length;
+ $('#setup-identities').textContent='Включённых доменов: '+model.Domains.filter(x=>x.Enabled).length+' · Включённых локальных пользователей: '+model.Users.filter(x=>x.Enabled).length;
+ $('#setup-authentication').textContent='Включённых политик авторизации: '+model.Authentication.filter(x=>x.Enabled).length;
+ $('#setup-access').textContent='Включённых политик доступа: '+model.Access.filter(x=>x.Enabled).length+'. Сроки действия проверяются отдельно.';
+ $('#setup-nas').textContent='Зарегистрированных NAS: '+(state?.nas.length||0);
+}
 async function loadAccessModel(){
  const response=await scopedFetch('/api/access-model');if(!response.ok)throw new Error(await response.text());const model=await response.json();
+ renderSetup(model);
  renderRuleModel(model);
  renderBindingChoices(model);
  selectItems('.location-select',model.Locations);selectItems('.segment-select',model.Segments);selectItems('.authentication-select',model.Authentication);selectItems('.access-select',model.Access);selectItems('.domain-select',model.Domains);
@@ -139,7 +148,7 @@ async function loadAccessModel(){
  $('#selfservice-link').href='/portal/'+(basePath?basePath.split('/')[2]:'default')+'/';
  await loadNotificationConfig();
 }
-async function loadTenants(){const r=await scopedFetch('/api/tenants');if(r.status===404){$('#tenants-nav').hidden=true;return;}if(!r.ok)throw new Error(await r.text());const items=await r.json();$('#tenants-nav').hidden=false;if(location.hash==='#tenants')activateView('tenants');filterNavigation();table('#tenant-list',['ID','Название'],items.map(t=>[t.ID,t.Name]));$('#tenant-links').replaceChildren();for(const t of items){const a=document.createElement('a');a.href='/t/'+encodeURIComponent(t.ID)+'/';a.textContent='Открыть '+t.Name;a.className='tenant-link';$('#tenant-links').append(a);}}
+async function loadTenants(){const r=await scopedFetch('/api/tenants');if(r.status===404){$('#tenants-nav').hidden=true;return;}if(!r.ok)throw new Error(await r.text());const items=await r.json();$('#tenants-nav').hidden=false;$('#setup-tenants').hidden=false;if(location.hash==='#tenants')activateView('tenants');filterNavigation();table('#tenant-list',['ID','Название'],items.map(t=>[t.ID,t.Name]));$('#tenant-links').replaceChildren();for(const t of items){const a=document.createElement('a');a.href='/t/'+encodeURIComponent(t.ID)+'/';a.textContent='Открыть '+t.Name;a.className='tenant-link';$('#tenant-links').append(a);}}
 for(const [formId,path] of Object.entries({'authentication-form':'authentication-policies','access-form':'access-policies','location-form':'locations','segment-form':'network_segments','mapping-form':'segment-mappings','domain-form':'domains','local-user-form':'local-users','tenant-form':'tenants'})){
  $('#'+formId).onsubmit=async e=>{e.preventDefault();const form=e.target,data=Object.fromEntries(new FormData(form));for(const el of form.elements)if(el.name){if(el.type==='checkbox')data[el.name]=el.checked;if(el.type==='number')data[el.name]=Number(el.value);if(el.type==='datetime-local')data[el.name]=el.value?Math.floor(new Date(el.value).getTime()/1000):0;}
  for(const key of ['Subjects','Endpoints','Steps'])if(key in data)data[key]=data[key].split('\n').map(v=>v.trim()).filter(Boolean);
