@@ -215,7 +215,7 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 
 // Missing updates mean unknown reachability, not proof of disconnection.
 func (s *Store) MarkStaleSessions(ctx context.Context) error {
-	if err := s.Exec(ctx, "UPDATE sessions SET status='stale' WHERE status='active' AND last_seen<?", time.Now().Unix()-900); err != nil {
+	if err := s.Exec(ctx, "UPDATE sessions SET status='stale' WHERE status='active' AND last_seen < ? - COALESCE((SELECT stale_seconds FROM nas WHERE nas.address=sessions.nas),900)", time.Now().Unix()); err != nil {
 		return err
 	}
 	return s.Exec(ctx, "DELETE FROM accounting_events WHERE received_at<?", time.Now().Add(-7*24*time.Hour).Unix())
