@@ -70,6 +70,12 @@ func TestMandatoryChainNoDowngradeAndMultipleModes(t *testing.T) {
 	if call("wrong-password;otp=123456", 1) != radius.CodeAccessReject || factor.calls != 0 {
 		t.Fatal("password failure consumed OTP")
 	}
+	if call("test-password-12345", 1) != radius.CodeAccessReject || factor.calls != 0 {
+		t.Fatal("missing OTP accepted or consumed")
+	}
+	if call("test-password-12345;otp=abcdef", 1) != radius.CodeAccessReject || factor.calls != 0 {
+		t.Fatal("invalid OTP format passed to verifier")
+	}
 	factor.valid = false
 	if call("test-password-12345;otp=123456", 1) != radius.CodeAccessReject {
 		t.Fatal("failed MFA fell through to weak policy")

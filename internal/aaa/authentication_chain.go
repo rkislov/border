@@ -33,11 +33,10 @@ func authenticateChain(ctx context.Context, s *store.Store, p *radius.Packet, b 
 	for _, step := range a.Chain() {
 		if step == "totp" {
 			index := strings.LastIndex(password, ";otp=")
-			if index < 0 || len(password[index+5:]) != 6 {
-				return user, nil, false, "TOTP required"
+			if index >= 0 {
+				factor = password[index+5:]
+				password = password[:index]
 			}
-			factor = password[index+5:]
-			password = password[:index]
 		}
 	}
 	for _, step := range a.Chain() {
@@ -46,7 +45,13 @@ func authenticateChain(ctx context.Context, s *store.Store, p *radius.Packet, b 
 		case "device":
 			valid = registeredDevice(ctx, s, p)
 		case "totp":
-			if o.TOTP != nil {
+			formatOK := len(factor) == 6
+			for _, digit := range factor {
+				if digit < '0' || digit > '9' {
+					formatOK = false
+				}
+			}
+			if o.TOTP != nil && formatOK {
 				ok, err := o.TOTP.VerifyTOTP(ctx, user, factor)
 				valid = ok && err == nil
 			}
