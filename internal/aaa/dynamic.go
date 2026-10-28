@@ -29,15 +29,15 @@ func ChangeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 	if id == "" || len(id) > 253 || (action != "disconnect" && action != "vlan") {
 		return DynamicResult{}, fmt.Errorf("invalid session action")
 	}
-	var secret, mac, username, grantToken string
+	var secret, mac, username, grantToken, generation string
 	var port int
 	var updated int64
-	if err := s.Row(ctx, "SELECT n.secret,n.coa_port,s.mac,s.username,s.updated_at,s.grant_token FROM sessions s JOIN nas n ON n.address=s.nas WHERE s.nas=? AND s.session_id=? AND s.status='active'", nas, id).Scan(&secret, &port, &mac, &username, &updated, &grantToken); err != nil {
+	if err := s.Row(ctx, "SELECT n.secret,n.coa_port,s.mac,s.username,s.updated_at,s.grant_token,s.generation FROM sessions s JOIN nas n ON n.address=s.nas WHERE s.nas=? AND s.session_id=? AND s.status IN ('active','stale')", nas, id).Scan(&secret, &port, &mac, &username, &updated, &grantToken, &generation); err != nil {
 		return DynamicResult{}, fmt.Errorf("active session on registered NAS required")
 	}
 	if len(expected) > 0 {
 		v := expected[0]
-		if v.MAC != mac || v.Username != username || v.Updated != updated || (v.GrantToken != "" && v.GrantToken != grantToken) {
+		if v.MAC != mac || v.Username != username || v.Updated != updated || (v.GrantToken != "" && v.GrantToken != grantToken) || (v.Generation != "" && v.Generation != generation) {
 			return DynamicResult{}, fmt.Errorf("session changed; refresh the list")
 		}
 	}
@@ -145,7 +145,7 @@ func ChangeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 		return DynamicResult{}, fmt.Errorf("dynamic authorization completed but audit failed")
 	}
 	if result.Acknowledged && action == "disconnect" {
-		if err = s.Exec(ctx, "UPDATE sessions SET status='disconnect-ack',updated_at=? WHERE nas=? AND session_id=? AND mac=? AND username=? AND updated_at=? AND grant_token=? AND status='active'", time.Now().Unix(), nas, id, mac, username, updated, grantToken); err != nil {
+		if err = s.ConfirmDisconnect(ctx, store.Session{NAS: nas, ID: id, MAC: mac, Username: username, GrantToken: grantToken, Generation: generation}); err != nil {
 			return DynamicResult{}, fmt.Errorf("NAS disconnected session, local status update failed")
 		}
 	}

@@ -21,7 +21,6 @@ import (
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
-	"layeh.com/radius/rfc2866"
 	"layeh.com/radius/rfc2868"
 )
 
@@ -193,31 +192,14 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 		if p.Code != radius.CodeAccountingRequest || !radius.IsAuthenticRequest(raw[:int(binary.BigEndian.Uint16(raw[2:4]))], secret) {
 			return nil, errors.New("invalid accounting authenticator")
 		}
-		id := rfc2866.AcctSessionID_GetString(p)
-		if id == "" {
-			return nil, errors.New("missing session id")
+		event, e := accountingEvent(p, host)
+		if e != nil {
+			return nil, e
 		}
-		var status string
-		switch rfc2866.AcctStatusType_Get(p) {
-		case rfc2866.AcctStatusType_Value_Start:
-			status = "active"
-		case rfc2866.AcctStatusType_Value_InterimUpdate:
-			status = "active"
-		case rfc2866.AcctStatusType_Value_Stop:
-			status = "stopped"
-		default:
-			return nil, errors.New("unsupported accounting status")
-		}
-		mac, _ := NormalizeMAC(rfc2865.CallingStationID_GetString(p))
-		classes := []string{}
-		for _, attr := range p.Attributes {
-			if attr.Type == 25 {
-				classes = append(classes, string(attr.Attribute))
-			}
-		}
-		if err = s.Accounting(ctx, host, id, mac, rfc2865.UserName_GetString(p), status, classes...); err != nil {
+		if err = s.ApplyAccounting(ctx, event); err != nil {
 			return nil, errors.New("accounting write failed")
 		}
+
 		return p.Response(radius.CodeAccountingResponse).Encode()
 	}
 	if p.Code != radius.CodeAccessRequest || !VerifyMessageAuthenticator(raw, secret) {
@@ -321,6 +303,7 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 			return nil, e
 		}
 		out.Attributes.Add(25, []byte(token))
+		out.Attributes.Add(85, []byte{0, 0, 1, 44})
 	}
 	// Preserve Proxy-State as required by RFC 2865.
 	for _, a := range p.Attributes {

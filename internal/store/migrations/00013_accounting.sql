@@ -1,0 +1,33 @@
+-- +goose Up
+ALTER TABLE sessions ADD COLUMN generation TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN event_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN started_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN session_seconds BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN last_seen BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN revoke_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN revoke_next BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN revoke_last BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN revoke_response TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN revoke_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN revoke_cause BIGINT NOT NULL DEFAULT 0;
+UPDATE sessions SET generation='legacy:' || nas || ':' || session_id || ':' || CAST(updated_at AS TEXT),last_seen=updated_at,event_at=updated_at,started_at=updated_at,revoke_attempts=COALESCE((SELECT attempts FROM access_grants g WHERE g.token=sessions.grant_token),0),revoke_next=COALESCE((SELECT next_attempt FROM access_grants g WHERE g.token=sessions.grant_token),0);
+CREATE TABLE accounting_nas(nas TEXT PRIMARY KEY,reset_at BIGINT NOT NULL DEFAULT 0,reset_kind TEXT NOT NULL DEFAULT '');
+CREATE TABLE accounting_events(nas TEXT NOT NULL,event_key TEXT NOT NULL,received_at BIGINT NOT NULL,PRIMARY KEY(nas,event_key));
+CREATE INDEX accounting_events_received ON accounting_events(received_at);
+CREATE TABLE accounting_grants(nas TEXT NOT NULL,session_id TEXT NOT NULL,token TEXT NOT NULL,PRIMARY KEY(nas,session_id,token));
+INSERT INTO accounting_grants(nas,session_id,token) SELECT nas,session_id,grant_token FROM sessions WHERE grant_token<>'';
+-- +goose Down
+DROP TABLE accounting_grants;
+DROP TABLE accounting_events;
+DROP TABLE accounting_nas;
+ALTER TABLE sessions DROP COLUMN revoke_cause;
+ALTER TABLE sessions DROP COLUMN revoke_error;
+ALTER TABLE sessions DROP COLUMN revoke_response;
+ALTER TABLE sessions DROP COLUMN revoke_last;
+ALTER TABLE sessions DROP COLUMN revoke_next;
+ALTER TABLE sessions DROP COLUMN revoke_attempts;
+ALTER TABLE sessions DROP COLUMN last_seen;
+ALTER TABLE sessions DROP COLUMN session_seconds;
+ALTER TABLE sessions DROP COLUMN started_at;
+ALTER TABLE sessions DROP COLUMN event_at;
+ALTER TABLE sessions DROP COLUMN generation;

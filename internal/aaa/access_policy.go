@@ -159,6 +159,7 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 			return nil, e
 		}
 		out.Attributes.Add(25, []byte(token))
+		out.Attributes.Add(85, []byte{0, 0, 1, 44})
 	}
 	for _, v := range p.Attributes {
 		if v.Type == 33 {
