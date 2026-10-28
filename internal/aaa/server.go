@@ -151,12 +151,14 @@ func ServeWithOptions(ctx context.Context, conn net.PacketConn, s *store.Store, 
 			return err
 		}
 		if n > 4096 {
+			s.Metrics.Observe("transport_drop", "drop", true, 0)
 			continue
 		}
 		j := job{raw: append([]byte(nil), raw[:n]...), addr: addr}
 		select {
 		case jobs <- j:
 		default:
+			s.Metrics.Observe("transport_drop", "drop", true, 0)
 		}
 	}
 }
@@ -166,7 +168,8 @@ func Process(ctx context.Context, s *store.Store, raw []byte, addr net.Addr, acc
 func ProcessAuthenticated(ctx context.Context, s *store.Store, raw []byte, addr net.Addr, accounting bool, verifier NetworkVerifier) ([]byte, error) {
 	return ProcessWithOptions(ctx, s, raw, addr, accounting, Options{Network: verifier})
 }
-func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr net.Addr, accounting bool, options Options) ([]byte, error) {
+func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr net.Addr, accounting bool, options Options) (response []byte, resultErr error) {
+	started := time.Now()
 	verifier := options.Network
 	host, _, err := net.SplitHostPort(addr.String())
 	if err != nil {
@@ -175,11 +178,37 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 	if options.Resolve != nil {
 		resolved, next, e := options.Resolve(ctx, host)
 		if e != nil {
+			s.Metrics.Observe("routing", "error", true, time.Since(started))
 			return nil, e
 		}
 		next.Resolve = nil
 		return ProcessWithOptions(ctx, resolved, raw, addr, accounting, next)
 	}
+	defer func() {
+		name := "radius_auth"
+		if accounting {
+			name = "radius_accounting"
+		}
+		outcome := "drop"
+		failed := true
+		if resultErr == nil && len(response) > 0 {
+			failed = false
+			switch radius.Code(response[0]) {
+			case radius.CodeAccessAccept:
+				outcome = "accept"
+			case radius.CodeAccessReject:
+				outcome = "reject"
+			case radius.CodeAccessChallenge:
+				outcome = "challenge"
+			case radius.CodeAccountingResponse:
+				outcome = "response"
+			default:
+				outcome = "drop"
+				failed = true
+			}
+		}
+		s.Metrics.Observe(name, outcome, failed, time.Since(started))
+	}()
 	secret, err := s.Secret(ctx, host)
 	if err != nil || len(secret) < 16 {
 		return nil, errors.New("unknown NAS")

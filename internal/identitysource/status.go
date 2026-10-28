@@ -13,7 +13,9 @@ import (
 	"time"
 )
 
-func (s *Service) AccountEnabled(ctx context.Context, user string) (bool, error) {
+func (s *Service) AccountEnabled(ctx context.Context, user string) (enabledResult bool, resultErr error) {
+	started := time.Now()
+	defer func() { s.Store.Metrics.Finish("identity_status", started, resultErr) }()
 	source, login, qualified := strings.Cut(user, "/")
 	if !qualified {
 		if l, ok := s.Legacy.(*directory.LDAP); ok {

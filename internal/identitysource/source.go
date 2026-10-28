@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var IDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
@@ -194,7 +195,9 @@ func (s *Service) Locals(ctx context.Context) ([]LocalUser, error) {
 	}
 	return out, rows.Err()
 }
-func (s *Service) Authenticate(ctx context.Context, user, password string) (directory.Identity, error) {
+func (s *Service) Authenticate(ctx context.Context, user, password string) (identityResult directory.Identity, resultErr error) {
+	started := time.Now()
+	defer func() { s.Store.Metrics.Finish("identity_auth", started, resultErr) }()
 	fail := fmt.Errorf("authentication failed")
 	if len(user) > 200 || len(password) > 1024 || password == "" {
 		return directory.Identity{}, fail
