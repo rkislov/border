@@ -9,6 +9,7 @@ import (
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
+	"time"
 )
 
 // Service profiles never fall back to MAC authorization or isolation VLANs.
@@ -38,6 +39,10 @@ func processService(ctx context.Context, s *store.Store, p *radius.Packet, host 
 			reason = c.Mode + " authorized"
 		}
 	}
+	if valid {
+		enabled, e := s.IdentityEnabled(ctx, user)
+		valid = enabled && e == nil
+	}
 	out := p.Response(radius.CodeAccessReject)
 	if valid {
 		out = p.Response(radius.CodeAccessAccept)
@@ -47,6 +52,13 @@ func processService(ctx context.Context, s *store.Store, p *radius.Packet, host 
 		if err = rfc2865.SessionTimeout_Set(out, 3600); err != nil {
 			return nil, err
 		}
+	}
+	if valid {
+		token, e := s.NewAccessGrant(ctx, host, user, "", time.Now().Unix()+3600)
+		if e != nil {
+			return nil, e
+		}
+		out.Attributes.Add(25, []byte(token))
 	}
 	for _, a := range p.Attributes {
 		if a.Type == 33 {

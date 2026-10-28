@@ -110,6 +110,10 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 		}
 	}
 	if valid {
+		enabled, e := s.IdentityEnabled(ctx, user)
+		valid = enabled && e == nil
+	}
+	if valid {
 		current, e := s.BoundPolicy(ctx, host)
 		valid = e == nil && current != nil && reflect.DeepEqual(current, b)
 		if valid {
@@ -148,6 +152,13 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 				return nil, err
 			}
 		}
+	}
+	if valid {
+		token, e := s.NewAccessGrant(ctx, host, user, b.Access.ID, time.Now().Unix()+int64(ttl))
+		if e != nil {
+			return nil, e
+		}
+		out.Attributes.Add(25, []byte(token))
 	}
 	for _, v := range p.Attributes {
 		if v.Type == 33 {

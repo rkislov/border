@@ -58,6 +58,11 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 			reply.Authorization.VLAN = bound.VLAN
 		}
 	}
+	if reply.Accept {
+		if enabled, e := s.IdentityEnabled(ctx, reply.Authorization.Identity); e != nil || !enabled {
+			policyErr = errors.New("identity disabled")
+		}
+	}
 	if reply.Accept && policyErr != nil {
 		clear(reply.Key)
 		reply.Accept = false
@@ -123,6 +128,17 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 		if err := rfc2865.SessionTimeout_Set(out, rfc2865.SessionTimeout(timeout)); err != nil {
 			return nil, err
 		}
+	}
+	if reply.Accept {
+		policy := ""
+		if bound != nil {
+			policy = bound.Access.ID
+		}
+		token, e := s.NewAccessGrant(ctx, host, reply.Authorization.Identity, policy, time.Now().Unix()+int64(timeout))
+		if e != nil {
+			return nil, e
+		}
+		out.Attributes.Add(25, []byte(token))
 	}
 	if reply.Accept || reply.Reject {
 		if err := s.Audit(ctx, host, reply.Authorization.Identity, code.String(), reply.Reason); err != nil {

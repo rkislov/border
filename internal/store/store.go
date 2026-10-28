@@ -50,6 +50,9 @@ type Event struct {
 type Session struct {
 	NAS, ID, MAC, Username, Status string
 	Updated                        int64
+	GrantToken                     string `json:"-"`
+	RevocationReason               string
+	RevocationAttempts             int
 }
 
 func Open(driver, dsn string) (*Store, error) {
@@ -194,8 +197,18 @@ func (s *Store) Isolation(ctx context.Context) (int, error) {
 func (s *Store) Audit(ctx context.Context, source, identity, result, reason string) error {
 	return s.Exec(ctx, "INSERT INTO auth_log(id,occurred_at,source,identity,result,reason) VALUES (?,?,?,?,?,?)", uuid.NewString(), time.Now().Unix(), source, identity, result, reason)
 }
-func (s *Store) Accounting(ctx context.Context, source, id, mac, user, status string) error {
-	return s.Exec(ctx, "INSERT INTO sessions(nas,session_id,mac,username,status,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(nas,session_id) DO UPDATE SET mac=excluded.mac,username=excluded.username,status=excluded.status,updated_at=excluded.updated_at", source, id, mac, user, status, time.Now().Unix())
+func (s *Store) Accounting(ctx context.Context, source, id, mac, user, status string, classes ...string) error {
+	token := ""
+	for _, candidate := range classes {
+		var known string
+		if err := s.Row(ctx, "SELECT token FROM access_grants WHERE token=? AND nas=?", candidate, source).Scan(&known); err == nil {
+			token = known
+			break
+		} else if err != sql.ErrNoRows {
+			return err
+		}
+	}
+	return s.Exec(ctx, "INSERT INTO sessions(nas,session_id,mac,username,status,updated_at,grant_token) VALUES (?,?,?,?,?,?,?) ON CONFLICT(nas,session_id) DO UPDATE SET mac=excluded.mac,username=excluded.username,status=excluded.status,updated_at=excluded.updated_at,grant_token=excluded.grant_token", source, id, mac, user, status, time.Now().Unix(), token)
 }
 func (s *Store) NASList(ctx context.Context) ([]NAS, error) {
 	rows, err := s.DB.QueryContext(ctx, "SELECT address,name,coa_port,portal_enabled,dictionary,access_mode,credential,COALESCE(location_id,''),COALESCE(access_policy_id,'') FROM nas ORDER BY name")
@@ -265,7 +278,7 @@ func (s *Store) Events(ctx context.Context) ([]Event, error) {
 	return out, rows.Err()
 }
 func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT nas,session_id,mac,username,status,updated_at FROM sessions ORDER BY updated_at DESC LIMIT 200")
+	rows, err := s.DB.QueryContext(ctx, "SELECT s.nas,s.session_id,s.mac,s.username,s.status,s.updated_at,COALESCE(g.reason,''),COALESCE(g.attempts,0) FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas ORDER BY s.updated_at DESC LIMIT 200")
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +286,7 @@ func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
 	out := []Session{}
 	for rows.Next() {
 		var v Session
-		if err = rows.Scan(&v.NAS, &v.ID, &v.MAC, &v.Username, &v.Status, &v.Updated); err != nil {
+		if err = rows.Scan(&v.NAS, &v.ID, &v.MAC, &v.Username, &v.Status, &v.Updated, &v.RevocationReason, &v.RevocationAttempts); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

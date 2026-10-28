@@ -37,7 +37,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.4.1-dev"
+var version = "0.4.2-dev"
 
 func main() {
 	if err := command().Execute(); err != nil {
@@ -354,6 +354,8 @@ func command() *cobra.Command {
 			extraServers = append(extraServers, challengeServer)
 			starts = append(starts, func() error { return challengeServer.Serve(challengeListener) })
 		}
+		stopRevocations := aaa.StartRevocations(ctx, s, identities.SyncAccountStatus)
+		defer stopRevocations()
 		if guests != nil {
 			stopCleanup := guests.StartCleanup(ctx)
 			defer stopCleanup()
