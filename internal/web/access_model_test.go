@@ -33,7 +33,7 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 	page := send("GET", "/", "", "")
 	csrf := strings.Split(strings.Split(page.Body.String(), `name="csrf-token" content="`)[1], `"`)[0]
 	for _, v := range []struct{ path, body string }{
-		{"domains", `{"ID":"corp","Name":"AD","Enabled":true,"Endpoints":["ldaps://corp.example.test"],"BaseDN":"dc=corp","BindDN":"cn=reader","BindPassword":"secret-ldap-password","UserAttribute":"uid"}`},
+		{"domains", `{"ID":"corp","Name":"AD","Enabled":true,"RevokeMissingUsers":true,"Endpoints":["ldaps://corp.example.test"],"BaseDN":"dc=corp","BindDN":"cn=reader","BindPassword":"secret-ldap-password","UserAttribute":"uid"}`},
 		{"local-users", `{"Username":"alice","Password":"local-password-123","Email":"alice@example.test","Enabled":true}`},
 		{"locations", `{"ID":"office","Name":"Office"}`}, {"network_segments", `{"ID":"staff","Name":"Staff"}`},
 		{"authentication-policies", `{"ID":"mfa","Name":"MFA","Source":"directory","DomainID":"corp","RequireTOTP":true,"Steps":["device","primary","totp"],"Enabled":true}`},
@@ -57,6 +57,9 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 		if w.Code != 200 || strings.Contains(w.Body.String(), "secret-") || strings.Contains(w.Body.String(), "local-password") {
 			t.Fatal("secret leakage", path, w.Code)
 		}
+	}
+	if w := send("GET", "/api/access-model", "", ""); !strings.Contains(w.Body.String(), `"RevokeMissingUsers":true`) {
+		t.Fatal("missing user setting not persisted")
 	}
 	// Diagnostics are authenticated, CSRF protected, and do not issue access.
 	body := `{"NAS":"192.0.2.1","Protocol":"pap","Username":"corp/alice"}`
