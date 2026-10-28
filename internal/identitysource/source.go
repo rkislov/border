@@ -22,6 +22,7 @@ import (
 var IDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 type Domain struct {
+	RevokeMissingUsers                                 bool
 	ID, Name                                           string
 	Enabled                                            bool
 	Endpoints                                          []string

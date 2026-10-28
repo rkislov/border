@@ -96,11 +96,14 @@ func (l *LDAP) Authenticate(ctx context.Context, user, password string) (Identit
 		return Identity{}, fail
 	}
 	filter := "(" + l.UserAttribute + "=" + ldap.EscapeFilter(user) + ")"
-	result, err := conn.Search(ldap.NewSearchRequest(l.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, filter, []string{l.UserAttribute, "mail", "mobile", "memberOf"}, nil))
+	result, err := conn.Search(ldap.NewSearchRequest(l.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, filter, []string{l.UserAttribute, "mail", "mobile", "memberOf", "accountExpires", "krbPrincipalExpiration"}, nil))
 	if err != nil || len(result.Entries) != 1 {
 		return Identity{}, fail
 	}
 	entry := result.Entries[0]
+	if expired, e := accountExpired(entry, time.Now()); e != nil || expired {
+		return Identity{}, fail
+	}
 	for _, attribute := range entry.Attributes {
 		if strings.HasPrefix(strings.ToLower(attribute.Name), "memberof;range=") {
 			return Identity{}, fail
@@ -136,9 +139,15 @@ func (l *LDAP) AccountEnabled(ctx context.Context, user string) (bool, error) {
 	if err = conn.Bind(l.BindDN, l.BindPassword); err != nil {
 		return false, err
 	}
-	result, err := conn.Search(ldap.NewSearchRequest(l.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, "("+l.UserAttribute+"="+ldap.EscapeFilter(user)+")", []string{"userAccountControl", "nsAccountLock"}, nil))
+	result, err := conn.Search(ldap.NewSearchRequest(l.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, "("+l.UserAttribute+"="+ldap.EscapeFilter(user)+")", []string{"userAccountControl", "nsAccountLock", "accountExpires", "krbPrincipalExpiration"}, nil))
 	if err != nil {
 		return false, err
+	}
+	if len(result.Referrals) != 0 {
+		return false, fmt.Errorf("account status referral unresolved")
+	}
+	if len(result.Entries) == 0 {
+		return false, ErrAccountNotFound
 	}
 	if len(result.Entries) != 1 {
 		return false, fmt.Errorf("account status unknown")
@@ -146,6 +155,9 @@ func (l *LDAP) AccountEnabled(ctx context.Context, user string) (bool, error) {
 	return accountEnabled(result.Entries[0])
 }
 func accountEnabled(entry *ldap.Entry) (bool, error) {
+	if expired, err := accountExpired(entry, time.Now()); err != nil || expired {
+		return false, err
+	}
 	if value := entry.GetAttributeValue("userAccountControl"); value != "" {
 		flags, err := strconv.ParseUint(value, 10, 32)
 		return flags&2 == 0, err

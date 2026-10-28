@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/rkislov/border/internal/directory"
 	"net/url"
@@ -22,6 +24,9 @@ func (s *Service) AccountEnabled(ctx context.Context, user string) (bool, error)
 	if source == "local" {
 		var enabled int
 		err := s.Store.Row(ctx, "SELECT enabled FROM local_users WHERE username=?", login).Scan(&enabled)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
 		return enabled == 1, err
 	}
 	d, err := s.Domain(ctx, source)
@@ -38,6 +43,7 @@ func (s *Service) AccountEnabled(ctx context.Context, user string) (bool, error)
 	if d.CAPEM != "" && !roots.AppendCertsFromPEM([]byte(d.CAPEM)) {
 		return false, fmt.Errorf("invalid directory CA")
 	}
+	missing := 0
 	for _, endpoint := range d.Endpoints {
 		u, e := url.Parse(endpoint)
 		if e != nil {
@@ -48,10 +54,23 @@ func (s *Service) AccountEnabled(ctx context.Context, user string) (bool, error)
 		if e == nil {
 			return enabled, nil
 		}
+		if errors.Is(e, directory.ErrAccountNotFound) {
+			missing++
+		}
 		err = e
 		if ctx.Err() != nil {
 			break
 		}
+	}
+	return missingAccountResult(d.RevokeMissingUsers, missing, len(d.Endpoints), err)
+}
+
+func missingAccountResult(revoke bool, missing, total int, err error) (bool, error) {
+	if revoke && total > 0 && missing == total {
+		return false, nil
+	}
+	if err == nil {
+		err = fmt.Errorf("account status unavailable")
 	}
 	return false, err
 }
