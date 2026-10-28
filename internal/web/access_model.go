@@ -45,7 +45,35 @@ func (a *app) accessRoutes(m *http.ServeMux) {
 			http.Error(w, "database unavailable", 503)
 			return
 		}
-		reply(w, map[string]any{"Locations": locations, "Segments": segments, "Authentication": authentication, "Access": access, "Mappings": mappings, "Domains": domains, "Users": users})
+		groups, err := a.s.UserGroups(ctx)
+		if err != nil {
+			http.Error(w, "groups unavailable", 503)
+			return
+		}
+		rules := []store.RuleSet{}
+		for _, p := range access {
+			c, e := a.s.Rules(ctx, p.ID)
+			if e != nil {
+				http.Error(w, "rules unavailable", 503)
+				return
+			}
+			rules = append(rules, c)
+		}
+		reply(w, map[string]any{"Groups": groups, "RuleSets": rules, "Locations": locations, "Segments": segments, "Authentication": authentication, "Access": access, "Mappings": mappings, "Domains": domains, "Users": users})
+	})
+	m.HandleFunc("POST /api/user-groups", func(w http.ResponseWriter, r *http.Request) {
+		var g store.UserGroup
+		if !decode(w, r, &g) {
+			return
+		}
+		a.finish(w, r, a.s.SaveUserGroup(r.Context(), g), "save local group")
+	})
+	m.HandleFunc("POST /api/access-rules", func(w http.ResponseWriter, r *http.Request) {
+		var c store.RuleSet
+		if !decode(w, r, &c) {
+			return
+		}
+		a.finish(w, r, a.s.SaveRules(r.Context(), c), "save ordered access rules")
 	})
 	m.HandleFunc("POST /api/authentication-policies", func(w http.ResponseWriter, r *http.Request) {
 		var v store.AuthenticationPolicy

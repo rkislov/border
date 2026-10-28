@@ -31,6 +31,8 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 	if a.Source == "eap_tls" && valid && b.Access.Mode == "network" && o.EAP != nil && len(p.Attributes.Get(79)) > 0 {
 		return processEAP(ctx, s, p, host, o.EAP)
 	}
+	var groups []string
+	reason := "authentication failed"
 	user := rfc2865.UserName_GetString(p)
 	if a.Source == "mab" {
 		mac, e := NormalizeMAC(rfc2865.CallingStationID_GetString(p))
@@ -57,7 +59,7 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 			}
 			user = strings.ToLower(user)
 		}
-		if !s.PolicySubject(ctx, b.Access.ID, user) {
+		if !b.Rules.Enabled && !s.PolicySubject(ctx, b.Access.ID, user) {
 			valid = false
 		}
 		password := rfc2865.UserPassword_GetString(p)
@@ -79,6 +81,9 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 				} else {
 					i, e := o.Identities.Authenticate(ctx, user, password)
 					valid = e == nil && i.Username == user
+					if valid {
+						groups = i.Groups
+					}
 				}
 			case "codes":
 				if o.Network == nil {
@@ -112,7 +117,12 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 			valid = err == nil
 		}
 	}
-	valid = valid && s.PolicySubject(ctx, b.Access.ID, user)
+	if valid {
+		valid, reason, err = evaluatePolicy(ctx, s, p, host, user, groups, b)
+		if err != nil {
+			return nil, err
+		}
+	}
 	out := p.Response(radius.CodeAccessReject)
 	if !valid && len(p.Attributes.Get(79)) > 1 {
 		message := p.Attributes.Get(79)
@@ -144,7 +154,7 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 			out.Attributes.Add(33, v.Attribute)
 		}
 	}
-	if err = s.Audit(ctx, host, user, out.Code.String(), "access policy "+b.Access.ID); err != nil {
+	if err = s.Audit(ctx, host, user, out.Code.String(), "access policy "+b.Access.ID+": "+reason); err != nil {
 		return nil, fmt.Errorf("policy audit failed")
 	}
 	if err = SignMessageAuthenticator(out); err != nil {

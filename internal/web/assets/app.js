@@ -117,6 +117,7 @@ function editableTable(target,heads,items,columns,form){table(target,heads,items
 function selectItems(selector,items){document.querySelectorAll(selector).forEach(s=>{const old=s.value,first=s.options[0]?.value===''?s.options[0].cloneNode(true):null;s.replaceChildren();if(first)s.add(first);items.forEach(v=>s.add(new Option(v.Name+' · '+v.ID,v.ID)));if([...s.options].some(o=>o.value===old))s.value=old;});}
 async function loadAccessModel(){
  const response=await scopedFetch('/api/access-model');if(!response.ok)throw new Error(await response.text());const model=await response.json();
+ renderRuleModel(model);
  selectItems('.location-select',model.Locations);selectItems('.segment-select',model.Segments);selectItems('.authentication-select',model.Authentication);selectItems('.access-select',model.Access);selectItems('.domain-select',model.Domains);
  editableTable('#authentication-list',['ID','Название','Источник','Домен','TOTP','Состояние'],model.Authentication,a=>[a.ID,a.Name,a.Source,a.DomainID,a.RequireTOTP?'Обязателен':'Нет',a.Enabled?'Включена':'Выключена'],'#authentication-form');
  editableTable('#access-list',['ID','Название','Авторизация','Назначение','Сегмент','Действует до','Сессия, сек','Разрешено','Состояние'],model.Access,a=>[a.ID,a.Name,a.AuthenticationID,a.Mode,a.SegmentID,a.ValidUntil?date(a.ValidUntil):'Без ограничения',a.SessionSeconds,a.Subjects.join(', '),a.Enabled?'Включена':'Выключена'],'#access-form');
@@ -138,3 +139,24 @@ for(const [formId,path] of Object.entries({'authentication-form':'authentication
 async function loadNotificationConfig(){const r=await scopedFetch('/api/notifications?scope='+encodeURIComponent($('#notification-scope').value));if(!r.ok)throw new Error(await r.text());const c=await r.json(),f=$('#notifications-form');for(const channel of ['SMTP','SMS','Push']){for(const [key,value] of Object.entries(c[channel])){const el=f.elements[channel+key];if(el){if(el.type==='checkbox')el.checked=!!value;else el.value=value??'';}}f.elements[channel+'Mode'].querySelector('[value="inherit"]').disabled=c.Scope==='default';}f.elements.SMTPPassword.value='';f.elements.SMSToken.value='';$('#notifications-status').textContent='SMTP: '+(c.SMTP.HasPassword?'пароль сохранён':'пароль не задан')+' · SMS: '+(c.SMS.HasToken?'токен сохранён':'токен не задан')+' · Push: '+(c.Push.PublicKey?'ключ создан':'ключ ещё не создан');}
 $('#notification-scope').onchange=()=>loadNotificationConfig().catch(e=>notice(e.message,true));
 $('#notifications-form').onsubmit=async e=>{e.preventDefault();const f=e.target,data={Scope:f.elements.Scope.value,SMTP:{},SMS:{},Push:{}};for(const el of f.elements){if(!el.name || el.name==='Scope')continue;const channel=['SMTP','SMS','Push'].find(c=>el.name.startsWith(c));if(channel)data[channel][el.name.slice(channel.length)]=el.type==='checkbox'?el.checked:el.value;}await mutate('/api/notifications',data);};
+
+let ruleSets=[],ruleDraft=null,rulesDirty=false;
+const ruleArrays=['Subjects','Groups','DirectoryGroups','NAS','Locations','SSIDs','OS','DeviceTypes','Manufacturers'];
+function renderRuleModel(model){
+ editableTable('#user-group-list',['ID','Название','Участники','Состояние'],model.Groups,g=>[g.ID,g.Name,g.Members.join(', '),g.Enabled?'Включена':'Выключена'],'#user-group-form');
+ ruleSets=model.RuleSets;selectItems('.rule-policy-select',model.Access);if(!rulesDirty)selectRuleDraft();
+}
+function selectRuleDraft(){const id=$('#rule-policy').value;ruleDraft=id?structuredClone(ruleSets.find(r=>r.PolicyID===id)||{PolicyID:id,Version:0,Enabled:false,Rules:[]}):null;rulesDirty=false;renderRuleDraft();}
+function renderRuleDraft(){
+ $('#rules-enabled').checked=!!ruleDraft?.Enabled;$('#save-rules').disabled=!ruleDraft;
+ $('#rules-status').textContent=!ruleDraft?'Выберите политику':rulesDirty?'Черновик изменён, изменения ещё не применены.':'Версия набора: '+ruleDraft.Version;
+ const rules=(ruleDraft?.Rules||[]).toSorted((a,b)=>a.Priority-b.Priority);
+ table('#rule-list',['Приоритет','ID','Название','Действие','Состояние'],rules.map(r=>[r.Priority,r.ID,r.Name,r.Effect==='allow'?'Разрешить':'Запретить',r.Enabled?'Включено':'Выключено']));
+ for(const rule of rules){const edit=document.createElement('button');edit.type='button';edit.textContent='Изменить '+rule.ID;edit.onclick=()=>fillForm('#access-rule-form',Object.fromEntries(Object.entries({...Object.fromEntries(ruleArrays.map(k=>[k,[]])),...rule}).map(([k,v])=>[k,v??[]])));const remove=document.createElement('button');remove.type='button';remove.textContent='Убрать из черновика '+rule.ID;remove.onclick=()=>{ruleDraft.Rules=ruleDraft.Rules.filter(r=>r.ID!==rule.ID);rulesDirty=true;renderRuleDraft();};$('#rule-list').append(edit,remove);}
+}
+$('#rule-policy').onchange=()=>{if(rulesDirty&&!confirm('Отбросить несохранённые изменения правил?')){$('#rule-policy').value=ruleDraft.PolicyID;return;}selectRuleDraft();};
+$('#rules-enabled').onchange=e=>{if(!ruleDraft){e.target.checked=false;return;}ruleDraft.Enabled=e.target.checked;rulesDirty=true;renderRuleDraft();};
+$('#reset-rules').onclick=()=>{if(!rulesDirty||confirm('Отбросить изменения черновика?'))selectRuleDraft();};
+$('#access-rule-form').onsubmit=e=>{e.preventDefault();if(!ruleDraft){notice('Сначала выберите политику доступа',true);return;}const f=e.target,r=Object.fromEntries(new FormData(f));for(const key of ruleArrays)r[key]=r[key].split('\n').map(v=>key==='SSIDs'?v:v.trim()).filter(Boolean);r.Priority=Number(r.Priority);r.Enabled=f.elements.Enabled.checked;r.AllAuthenticated=f.elements.AllAuthenticated.checked;if(ruleDraft.Rules.some(v=>v.ID!==r.ID&&v.Priority===r.Priority)){notice('Приоритет должен быть уникальным в этом наборе',true);return;}ruleDraft.Rules=ruleDraft.Rules.filter(v=>v.ID!==r.ID);ruleDraft.Rules.push(r);rulesDirty=true;renderRuleDraft();notice('Правило добавлено в черновик. Примените набор, чтобы сохранить.');};
+$('#save-rules').onclick=async()=>{if(ruleDraft&&await mutate('/api/access-rules',ruleDraft)){rulesDirty=false;selectRuleDraft();}};
+$('#user-group-form').onsubmit=async e=>{e.preventDefault();const f=e.target,data=Object.fromEntries(new FormData(f));data.Members=data.Members.split('\n').map(v=>v.trim()).filter(Boolean);data.Enabled=f.elements.Enabled.checked;await mutate('/api/user-groups',data);};

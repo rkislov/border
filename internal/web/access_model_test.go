@@ -39,6 +39,8 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 		{"access-policies", `{"ID":"staff","Name":"Staff","AuthenticationID":"mfa","Mode":"network","SegmentID":"staff","SessionSeconds":3600,"Enabled":true,"Subjects":["corp/alice"]}`},
 		{"segment-mappings", `{"LocationID":"office","SegmentID":"staff","VLAN":200}`},
 		{"nas", `{"Address":"192.0.2.1","Name":"NAS","Secret":"nas-secret-123456789","LocationID":"office","AccessPolicyID":"staff"}`},
+		{"user-groups", `{"ID":"staff","Name":"Staff","Enabled":true,"Members":["corp/alice"]}`},
+		{"access-rules", `{"PolicyID":"staff","Version":0,"Enabled":true,"Rules":[{"ID":"staff","Name":"Staff","Enabled":true,"Effect":"allow","Priority":10,"Groups":["staff"]}]}`},
 		{"notifications", `{"Scope":"corp","SMTP":{"Mode":"custom","Address":"smtp.example.test:465","From":"border@example.test","Username":"sender","Password":"secret-smtp-password"},"SMS":{"Mode":"disabled"},"Push":{"Mode":"custom","Contact":"admin@example.test"}}`},
 	} {
 		if w := send("POST", "/api/"+v.path, v.body, ""); w.Code != 403 {
