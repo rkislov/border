@@ -209,7 +209,13 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 			return nil, errors.New("unsupported accounting status")
 		}
 		mac, _ := NormalizeMAC(rfc2865.CallingStationID_GetString(p))
-		if err = s.Accounting(ctx, host, id, mac, rfc2865.UserName_GetString(p), status); err != nil {
+		classes := []string{}
+		for _, attr := range p.Attributes {
+			if attr.Type == 25 {
+				classes = append(classes, string(attr.Attribute))
+			}
+		}
+		if err = s.Accounting(ctx, host, id, mac, rfc2865.UserName_GetString(p), status, classes...); err != nil {
 			return nil, errors.New("accounting write failed")
 		}
 		return p.Response(radius.CodeAccountingResponse).Encode()
@@ -293,11 +299,29 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 			decision = Decision{Reason: "invalid MAC"}
 		}
 	}
+	if decision.Accept {
+		enabled, e := s.IdentityEnabled(ctx, identity)
+		if e != nil {
+			return nil, e
+		}
+		decision.Accept = enabled
+	}
 	code := radius.CodeAccessReject
 	if decision.Accept {
 		code = radius.CodeAccessAccept
 	}
 	out := p.Response(code)
+	if decision.Accept {
+		ttl := int64(3600)
+		if decision.Timeout > 0 {
+			ttl = int64(decision.Timeout)
+		}
+		token, e := s.NewAccessGrant(ctx, host, identity, "", time.Now().Unix()+ttl)
+		if e != nil {
+			return nil, e
+		}
+		out.Attributes.Add(25, []byte(token))
+	}
 	// Preserve Proxy-State as required by RFC 2865.
 	for _, a := range p.Attributes {
 		if a.Type == 33 {

@@ -94,6 +94,14 @@ func TestBoundLocalMFAValidityLocationAndNoFallback(t *testing.T) {
 	if out.Code != radius.CodeAccessAccept || vlan != "220" {
 		t.Fatal("NAS VLAN override", vlan)
 	}
+	token := string(out.Attributes.Get(25))
+	if token == "" {
+		t.Fatal("missing Class grant")
+	}
+	var principal, policyID string
+	if e = s.Row(ctx, "SELECT username,policy_id FROM access_grants WHERE token=?", token).Scan(&principal, &policyID); e != nil || principal != "local/alice" || policyID != policy.ID {
+		t.Fatal("incorrect canonical grant", principal, policyID, e)
+	}
 	policy.ValidUntil = time.Now().Unix() - 1
 	if e = s.SaveAccess(ctx, policy); e != nil {
 		t.Fatal(e)

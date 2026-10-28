@@ -195,7 +195,9 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 	r.Admin = web.HandlerWithOptions(s, manager, nil, m.RequireMTLS, guests)
 	r.Portal = selfservice.New(identities, codes, manager, portalURL, guests).Handler()
 	// Manager.Close owns the cleanup lifecycle, independent of create request cancellation.
-	r.stop = guests.StartCleanup(context.Background())
+	stopGuests := guests.StartCleanup(context.Background())
+	stopRevocations := aaa.StartRevocations(context.Background(), s, identities.SyncAccountStatus)
+	r.stop = func() { stopRevocations(); stopGuests() }
 	return r, nil
 }
 func (r *Runtime) close() {

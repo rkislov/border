@@ -75,6 +75,17 @@ func checkStore(t *testing.T, s *Store) {
 	if err != nil || len(events) != 1 {
 		t.Fatal("audit")
 	}
+	token, e := s.NewAccessGrant(ctx, "192.0.2.1", "user", "", 1)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.RefreshRevocations(ctx); e != nil {
+		t.Fatal(e)
+	}
+	var reason string
+	if e = s.Row(ctx, "SELECT reason FROM access_grants WHERE token=?", token).Scan(&reason); e != nil || reason == "" {
+		t.Fatal(reason, e)
+	}
 	devices, err := s.DeviceList(ctx)
 	if err != nil || len(devices) != 1 || !devices[0].Active {
 		t.Fatal("devices")

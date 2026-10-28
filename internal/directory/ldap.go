@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -114,4 +115,46 @@ func (l *LDAP) Authenticate(ctx context.Context, user, password string) (Identit
 		return Identity{}, fail
 	}
 	return Identity{Username: canonical, Email: email, Phone: entry.GetAttributeValue("mobile"), Groups: entry.GetAttributeValues("memberOf")}, nil
+}
+
+// AccountEnabled reads authoritative disable flags using the service account.
+// Missing/inaccessible attributes are unknown, never evidence of a block.
+func (l *LDAP) AccountEnabled(ctx context.Context, user string) (bool, error) {
+	conn, err := ldap.DialURL(l.URL, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}), ldap.DialWithTLSConfig(l.TLS))
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+	conn.SetTimeout(5 * time.Second)
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	if strings.HasPrefix(l.URL, "ldap://") {
+		if err = conn.StartTLS(l.TLS); err != nil {
+			return false, err
+		}
+	}
+	if err = conn.Bind(l.BindDN, l.BindPassword); err != nil {
+		return false, err
+	}
+	result, err := conn.Search(ldap.NewSearchRequest(l.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, "("+l.UserAttribute+"="+ldap.EscapeFilter(user)+")", []string{"userAccountControl", "nsAccountLock"}, nil))
+	if err != nil {
+		return false, err
+	}
+	if len(result.Entries) != 1 {
+		return false, fmt.Errorf("account status unknown")
+	}
+	return accountEnabled(result.Entries[0])
+}
+func accountEnabled(entry *ldap.Entry) (bool, error) {
+	if value := entry.GetAttributeValue("userAccountControl"); value != "" {
+		flags, err := strconv.ParseUint(value, 10, 32)
+		return flags&2 == 0, err
+	}
+	switch strings.ToLower(entry.GetAttributeValue("nsAccountLock")) {
+	case "true":
+		return false, nil
+	case "false":
+		return true, nil
+	}
+	return false, fmt.Errorf("disable flag unavailable")
 }

@@ -140,7 +140,12 @@ func (s *Service) Domains(ctx context.Context) ([]Domain, error) {
 	}
 	return out, nil
 }
-func (s *Service) SaveLocal(ctx context.Context, u LocalUser) error {
+func (s *Service) SaveLocal(ctx context.Context, u LocalUser) (result error) {
+	defer func() {
+		if result == nil && !u.Enabled {
+			result = s.Store.RevokeIdentity(ctx, "local/"+u.Username)
+		}
+	}()
 	if u.Phone != "" {
 		var err error
 		u.Phone, err = sms.Phone(u.Phone)
@@ -235,6 +240,10 @@ func (s *Service) Authenticate(ctx context.Context, user, password string) (dire
 	return directory.Identity{}, fail
 }
 func (s *Service) Active(ctx context.Context, qualified string) bool {
+	enabled, e := s.Store.IdentityEnabled(ctx, qualified)
+	if e != nil || !enabled {
+		return false
+	}
 	source, user, ok := strings.Cut(qualified, "/")
 	if !ok {
 		return false

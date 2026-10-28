@@ -222,6 +222,9 @@ func (s *Service) VerifyTOTP(ctx context.Context, user, code string) (bool, erro
 }
 func (s *Service) verify(ctx context.Context, user, code string, totpOnly bool) (bool, error) {
 	user = strings.ToLower(user)
+	if enabled, e := s.Store.IdentityEnabled(ctx, user); e != nil || !enabled {
+		return false, e
+	}
 	if len(user) > 200 || len(code) > 100 || code == "" {
 		return false, nil
 	}

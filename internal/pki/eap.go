@@ -48,6 +48,9 @@ func (m *Manager) AuthorizeClient(ctx context.Context, state tls.ConnectionState
 	if err := m.Store.Row(ctx, "SELECT c.owner,c.certificate,c.revoked_at,ca.certificate FROM certificates c JOIN certificate_authorities ca ON ca.id=c.ca_id WHERE c.serial=?", leaf.SerialNumber.Text(16)).Scan(&owner, &raw, &revoked, &caPEM); err != nil {
 		return "", fmt.Errorf("unregistered client certificate")
 	}
+	if enabled, e := m.Store.IdentityEnabled(ctx, owner); e != nil || !enabled {
+		return "", fmt.Errorf("identity disabled")
+	}
 	block, _ := pem.Decode([]byte(raw))
 	if block == nil || !bytes.Equal(block.Bytes, leaf.Raw) || revoked != 0 || owner == "" || leaf.Subject.CommonName != owner {
 		return "", fmt.Errorf("client certificate is revoked or identity does not match")
