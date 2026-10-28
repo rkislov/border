@@ -84,3 +84,18 @@ func TestPolicyShorteningAndRevocationLatch(t *testing.T) {
 		t.Fatal("expired grant restored")
 	}
 }
+func TestGrantCanonicalIdentity(t *testing.T) {
+	s := ruleStore(t)
+	ctx := t.Context()
+	token, e := s.NewAccessGrant(ctx, "192.0.2.1", "local/ALICE", "access", 9999999999)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.RevokeIdentity(ctx, "local/alice"); e != nil {
+		t.Fatal(e)
+	}
+	var reason string
+	if e = s.Row(ctx, "SELECT reason FROM access_grants WHERE token=?", token).Scan(&reason); e != nil || reason == "" {
+		t.Fatal(reason, e)
+	}
+}

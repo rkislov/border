@@ -37,6 +37,7 @@ func (s *Store) IdentityEnabled(ctx context.Context, user string) (bool, error) 
 	return enabled == 1, err
 }
 func (s *Store) NewAccessGrant(ctx context.Context, nas, user, policy string, expires int64) (string, error) {
+	user = strings.ToLower(user)
 	token := "border:" + uuid.NewString()
 	return token, s.Exec(ctx, "INSERT INTO access_grants(token,nas,username,policy_id,expires_at) VALUES(?,?,?,?,?)", token, nas, user, policy, expires)
 }
