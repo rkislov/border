@@ -139,6 +139,7 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 			return nil, e
 		}
 		out.Attributes.Add(25, []byte(token))
+		out.Attributes.Add(85, []byte{0, 0, 1, 44})
 	}
 	if reply.Accept || reply.Reject {
 		if err := s.Audit(ctx, host, reply.Authorization.Identity, code.String(), reply.Reason); err != nil {

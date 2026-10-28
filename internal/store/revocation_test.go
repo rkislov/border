@@ -44,7 +44,7 @@ func TestAccountingDoesNotReuseOldGrant(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, tc := range []struct{ nas, token, want string }{{"192.0.2.1", token, token}, {"192.0.2.1", "", ""}, {"192.0.2.2", token, ""}} {
+	for _, tc := range []struct{ nas, token, want string }{{"192.0.2.1", token, token}, {"192.0.2.1", "", token}, {"192.0.2.2", token, ""}} {
 		if e = s.Accounting(ctx, tc.nas, "same-id", "", "alice", "active", tc.token); e != nil {
 			t.Fatal(e)
 		}

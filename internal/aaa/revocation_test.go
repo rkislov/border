@@ -62,7 +62,7 @@ func TestAutomaticDisconnectRetryAndACK(t *testing.T) {
 		if code == radius.CodeDisconnectACK && status != "disconnect-ack" {
 			t.Fatal("ACK not persisted")
 		}
-		if e = s.Exec(ctx, "UPDATE access_grants SET next_attempt=0 WHERE token=?", token); e != nil {
+		if e = s.Exec(ctx, "UPDATE sessions SET revoke_next=0 WHERE grant_token=?", token); e != nil {
 			t.Fatal(e)
 		}
 	}

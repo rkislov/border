@@ -179,6 +179,7 @@ func TestAccounting(t *testing.T) {
 	s := database(t)
 	for _, status := range []rfc2866.AcctStatusType{rfc2866.AcctStatusType_Value_Start, rfc2866.AcctStatusType_Value_InterimUpdate, rfc2866.AcctStatusType_Value_Stop} {
 		p := radius.New(radius.CodeAccountingRequest, []byte(testSecret))
+		p.Attributes.Add(46, []byte{0, 0, 0, 0})
 		if err := rfc2866.AcctSessionID_SetString(p, "session-1"); err != nil {
 			t.Fatal(err)
 		}

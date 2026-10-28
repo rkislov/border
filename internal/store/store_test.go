@@ -86,6 +86,16 @@ func checkStore(t *testing.T, s *Store) {
 	if e = s.Row(ctx, "SELECT reason FROM access_grants WHERE token=?", token).Scan(&reason); e != nil || reason == "" {
 		t.Fatal(reason, e)
 	}
+	if e = s.ApplyAccounting(ctx, AccountingEvent{NAS: "192.0.2.1", ID: "session", Kind: "start", At: 1000, Timed: true, Classes: []string{token}}); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.ApplyAccounting(ctx, AccountingEvent{NAS: "192.0.2.1", Kind: "off", At: 2000, Timed: true}); e != nil {
+		t.Fatal(e)
+	}
+	sessions, e := s.Sessions(ctx)
+	if e != nil || len(sessions) != 1 || sessions[0].Status != "nas-off" {
+		t.Fatal(sessions, e)
+	}
 	devices, err := s.DeviceList(ctx)
 	if err != nil || len(devices) != 1 || !devices[0].Active {
 		t.Fatal("devices")

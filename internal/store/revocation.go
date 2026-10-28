@@ -65,8 +65,12 @@ func (s *Store) RevokeIdentity(ctx context.Context, user string) error {
 }
 func (s *Store) RefreshRevocations(ctx context.Context) error {
 	now := time.Now().Unix()
-	return s.Exec(ctx, `UPDATE access_grants SET reason='access revoked',next_attempt=0 WHERE reason='' AND (
+	return s.Exec(ctx, `UPDATE access_grants SET reason=CASE
+ WHEN username IN (SELECT username FROM identity_status WHERE blocked=1) OR username IN (SELECT 'local/' || username FROM local_users WHERE enabled=0) THEN 'user blocked'
+ WHEN EXISTS(SELECT 1 FROM domains d WHERE d.enabled=0 AND substr(access_grants.username,1,length(d.id)+1)=d.id || '/') THEN 'domain disabled'
+ WHEN EXISTS(SELECT 1 FROM access_policies p WHERE p.id=access_grants.policy_id AND p.valid_until>0 AND p.valid_until<=?) THEN 'policy expired'
+ WHEN expires_at<=? THEN 'session expired' ELSE 'policy unavailable' END,next_attempt=0 WHERE reason='' AND (
  expires_at<=? OR username IN (SELECT username FROM identity_status WHERE blocked=1) OR username IN (SELECT 'local/' || username FROM local_users WHERE enabled=0)
  OR EXISTS(SELECT 1 FROM domains d WHERE d.enabled=0 AND substr(access_grants.username,1,length(d.id)+1)=d.id || '/')
- OR (policy_id<>'' AND NOT EXISTS(SELECT 1 FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=access_grants.policy_id AND p.enabled=1 AND a.enabled=1 AND (p.valid_until=0 OR p.valid_until>?) AND (p.valid_from=0 OR p.valid_from<=?))))`, now, now, now)
+ OR (policy_id<>'' AND NOT EXISTS(SELECT 1 FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=access_grants.policy_id AND p.enabled=1 AND a.enabled=1 AND (p.valid_until=0 OR p.valid_until>?) AND (p.valid_from=0 OR p.valid_from<=?))))`, now, now, now, now, now)
 }
