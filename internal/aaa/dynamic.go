@@ -25,7 +25,18 @@ type DynamicResult struct {
 
 // ChangeSession addresses only an active recorded session on a registered NAS.
 // Authentication and Message-Authenticator follow RFC 5176 section 3.4.
-func ChangeSession(ctx context.Context, s *store.Store, nas, id, action string, vlan int, expected ...store.Session) (DynamicResult, error) {
+func ChangeSession(ctx context.Context, s *store.Store, nas, id, action string, vlan int, expected ...store.Session) (resultValue DynamicResult, resultErr error) {
+	started := time.Now()
+	defer func() {
+		outcome := "nak"
+		if resultValue.Acknowledged {
+			outcome = "ack"
+		}
+		if resultErr != nil {
+			outcome = "error"
+		}
+		s.Metrics.Observe("session_action", outcome, resultErr != nil || !resultValue.Acknowledged, time.Since(started))
+	}()
 	if id == "" || len(id) > 253 || (action != "disconnect" && action != "vlan") {
 		return DynamicResult{}, fmt.Errorf("invalid session action")
 	}

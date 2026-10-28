@@ -13,6 +13,7 @@ import (
 	netmail "net/mail"
 	"strings"
 	"sync"
+	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/rkislov/border/internal/auth"
@@ -221,7 +222,9 @@ func (s *Service) effective(ctx context.Context, id string) (Config, error) {
 func (s *Service) Send(ctx context.Context, to, subject, body string) error {
 	return s.SendForIdentity(ctx, "local/", to, subject, body)
 }
-func (s *Service) SendForIdentity(ctx context.Context, user, to, subject, body string) error {
+func (s *Service) SendForIdentity(ctx context.Context, user, to, subject, body string) (resultErr error) {
+	started := time.Now()
+	defer func() { s.Store.Metrics.Finish("smtp", started, resultErr) }()
 	c, err := s.effective(ctx, scope(user))
 	if err != nil {
 		return err
@@ -235,7 +238,9 @@ func (s *Service) SendForIdentity(ctx context.Context, user, to, subject, body s
 	}
 	return sender.Send(ctx, to, subject, body)
 }
-func (s *Service) SendSMS(ctx context.Context, user, phone, text string) error {
+func (s *Service) SendSMS(ctx context.Context, user, phone, text string) (resultErr error) {
+	started := time.Now()
+	defer func() { s.Store.Metrics.Finish("sms", started, resultErr) }()
 	c, err := s.effective(ctx, scope(user))
 	if err != nil {
 		return err

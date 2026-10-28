@@ -21,7 +21,9 @@ func StartRevocations(parent context.Context, s *store.Store, syncStatus ...func
 		defer ticker.Stop()
 		for {
 			run, cancelRun := context.WithTimeout(ctx, 10*time.Second)
+			started := time.Now()
 			err := s.PruneHistory(run, time.Now())
+			s.Metrics.Finish("retention", started, err)
 			cancelRun()
 			if err != nil && ctx.Err() == nil {
 				slog.Error("history cleanup failed", "error", err)
@@ -39,7 +41,10 @@ func StartRevocations(parent context.Context, s *store.Store, syncStatus ...func
 		defer ticker.Stop()
 		for {
 			for _, sync := range syncStatus {
-				if err := sync(ctx); err != nil && ctx.Err() == nil {
+				started := time.Now()
+				err := sync(ctx)
+				s.Metrics.Finish("account_sync", started, err)
+				if err != nil && ctx.Err() == nil {
 					slog.Error("account status sync failed", "error", err)
 				}
 			}
@@ -56,7 +61,10 @@ func StartRevocations(parent context.Context, s *store.Store, syncStatus ...func
 		defer ticker.Stop()
 		for {
 
-			if err := RevokeSessions(ctx, s); err != nil && ctx.Err() == nil {
+			started := time.Now()
+			err := RevokeSessions(ctx, s)
+			s.Metrics.Finish("revocation", started, err)
+			if err != nil && ctx.Err() == nil {
 				slog.Error("access revocation scan failed", "error", err)
 			}
 			select {

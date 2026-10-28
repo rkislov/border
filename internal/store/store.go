@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/rkislov/border/internal/telemetry"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
@@ -23,8 +24,9 @@ import (
 var migrations embed.FS
 
 type Store struct {
-	DB     *sql.DB
-	Driver string
+	Metrics *telemetry.Registry
+	DB      *sql.DB
+	Driver  string
 }
 type NAS struct {
 	InterimSeconds, StaleSeconds int
@@ -99,7 +101,7 @@ func Open(driver, dsn string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("database connection failed")
 	}
-	return &Store{DB: db, Driver: driver}, nil
+	return &Store{DB: db, Driver: driver, Metrics: telemetry.New()}, nil
 }
 func (s *Store) Migrate(ctx context.Context) error {
 	dialect := "sqlite3"

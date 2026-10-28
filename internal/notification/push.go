@@ -114,7 +114,18 @@ func publicDial(ctx context.Context, network, address string) (net.Conn, error) 
 	}
 	return nil, fmt.Errorf("push endpoint unavailable")
 }
-func (s *Service) Push(ctx context.Context, user, title, body string) (int, error) {
+func (s *Service) Push(ctx context.Context, user, title, body string) (sentResult int, resultErr error) {
+	started := time.Now()
+	defer func() {
+		outcome := "success"
+		if sentResult == 0 {
+			outcome = "empty"
+		}
+		if resultErr != nil {
+			outcome = "error"
+		}
+		s.Store.Metrics.Observe("push", outcome, resultErr != nil, time.Since(started))
+	}()
 	c, e := s.effective(ctx, scope(user))
 	if e != nil {
 		return 0, e
