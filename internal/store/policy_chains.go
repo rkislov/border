@@ -169,6 +169,10 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 
 // First matching binding wins. Its authentication failure is terminal.
 func (s *Store) SelectPolicy(ctx context.Context, nas string, request PolicyRequest) (*BoundPolicy, bool, error) {
+	return s.selectPolicy(ctx, nas, request, nil)
+}
+
+func (s *Store) selectPolicy(ctx context.Context, nas string, request PolicyRequest, trace *[]BindingTrace) (*BoundPolicy, bool, error) {
 	set, err := s.NASPolicies(ctx, nas)
 	if err != nil {
 		return nil, true, err
@@ -178,17 +182,12 @@ func (s *Store) SelectPolicy(ctx context.Context, nas string, request PolicyRequ
 		return p, p != nil, err
 	}
 	for _, b := range set.Bindings {
-		if !b.Enabled || b.Protocol != request.Protocol || b.ServiceType != 0 && b.ServiceType != request.ServiceType || b.SSID != "" && b.SSID != request.SSID {
-			continue
+		reason := bindingMismatch(b, request)
+		if trace != nil {
+			*trace = append(*trace, BindingTrace{ID: b.ID, PolicyID: b.PolicyID, Priority: b.Priority, Reason: reason})
 		}
-		if b.NASPortType != nil && (request.NASPortType == nil || *b.NASPortType != *request.NASPortType) {
+		if reason != "selected" {
 			continue
-		}
-		if b.IdentitySource != "" {
-			source, _, qualified := strings.Cut(strings.ToLower(request.Username), "/")
-			if !qualified || source != b.IdentitySource {
-				continue
-			}
 		}
 		p, err := s.policyForNAS(ctx, nas, b.PolicyID)
 		if err != nil {
