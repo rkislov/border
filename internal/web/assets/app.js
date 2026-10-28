@@ -26,12 +26,9 @@ async function load() {
   for(const nas of state.nas){const b=document.createElement('button');b.textContent='Изменить '+nas.Address;b.onclick=()=>fillForm('#nas-form',{...nas,Secret:''});$('#nas-list').append(b);}
   table('#vlans-list', ['VLAN', 'Название'], state.vlans.map(v => [v.ID, v.Name]), 'vlans');
   table('#devices-list', ['MAC', 'VLAN', 'Статус', 'Тип', 'Комментарий'], state.devices.map(d => [d.MAC, d.VLAN || 'NAS default', d.Active ? 'Активно' : 'Запрещено', d.Voice ? 'Voice' : 'Data', d.Comment]), 'devices');
-  const revokeReason = {'user blocked':'Пользователь заблокирован','domain disabled':'Домен отключён','policy expired':'Срок политики истёк','session expired':'Срок сессии истёк','policy unavailable':'Политика отключена или недоступна','access revoked':'Доступ отозван'};
-  const sessionStatus = {active:'Активна',stale:'Связь потеряна',stopped:'Завершена','nas-on':'NAS перезапущен','nas-off':'NAS выключен','disconnect-ack':'Отключение подтверждено'};
-  table('#sessions-list', ['NAS', 'Сессия', 'Пользователь', 'Статус', 'От клиента → NAS', 'NAS → клиент', 'Счётчики', 'Последний accounting', 'Причина отзыва', 'Попытки', 'Последняя попытка', 'Ответ NAS / ошибка', 'Следующая попытка'], state.sessions.map(s => [s.NAS,s.ID,s.Username,sessionStatus[s.Status] || s.Status,trafficBytes(s.InputBytes),trafficBytes(s.OutputBytes),trafficNote(s),date(s.LastSeen),revokeReason[s.RevocationReason] || s.RevocationReason || '—',s.RevocationAttempts || 0,s.RevocationLast ? date(s.RevocationLast) : '—',[s.RevocationResponse,s.RevocationCause ? 'Error-Cause='+s.RevocationCause : '',s.RevocationError].filter(Boolean).join(' · ') || '—',s.RevocationReason && ['active','stale'].includes(s.Status) ? (s.RevocationNext ? date(s.RevocationNext) : 'В очереди') : '—']));
-  const heads = ['Время', 'Источник', 'Идентификатор', 'Результат', 'Причина']; const rows = state.events.map(e => [date(e.Time), e.Source, e.Identity, e.Result, e.Reason]); table('#events-list', heads, rows); table('#recent', heads, rows.slice(0, 8));
+  const heads = ['Время', 'Источник', 'Идентификатор', 'Результат', 'Причина']; const rows = state.events.map(e => [date(e.Time), e.Source, e.Identity, e.Result, e.Reason]); table('#recent', heads, rows.slice(0, 8));
   document.querySelectorAll('.vlan-select').forEach(s => { const value = s.value; while(s.options.length > 1) s.remove(1); state.vlans.forEach(v => {const o = new Option(v.ID + ' · ' + v.Name, v.ID); s.add(o);}); s.value = value; });
-  $('#session-select').replaceChildren();state.sessions.filter(s=>['active','stale'].includes(s.Status)).forEach((s,i)=>$('#session-select').add(new Option(s.NAS+' · '+s.ID+' · '+s.Username,JSON.stringify({NAS:s.NAS,ID:s.ID,MAC:s.MAC,Username:s.Username,Updated:s.Updated,Generation:s.Generation}))));
+  await Promise.all([loadListing('sessions'),loadListing('events')]);
   $('#settings-form').elements.Isolation.value = state.isolation;
   await loadGuest();
  await loadProfiles();
@@ -229,3 +226,30 @@ $('#health-refresh').onclick=loadHealth;
 $('button[data-view="health"]').addEventListener('click',loadHealth);
 window.addEventListener('hashchange',()=>{if(location.hash==='#health')loadHealth();});
 if(location.hash==='#health')loadHealth();
+
+function renderSessions(items){
+  const revokeReason = {'user blocked':'Пользователь заблокирован','domain disabled':'Домен отключён','policy expired':'Срок политики истёк','session expired':'Срок сессии истёк','policy unavailable':'Политика отключена или недоступна','access revoked':'Доступ отозван'};
+  const sessionStatus = {active:'Активна',stale:'Связь потеряна',stopped:'Завершена','nas-on':'NAS перезапущен','nas-off':'NAS выключен','disconnect-ack':'Отключение подтверждено'};
+  table('#sessions-list', ['NAS', 'Сессия', 'Пользователь', 'Статус', 'От клиента → NAS', 'NAS → клиент', 'Счётчики', 'Последний accounting', 'Причина отзыва', 'Попытки', 'Последняя попытка', 'Ответ NAS / ошибка', 'Следующая попытка'], items.map(s => [s.NAS,s.ID,s.Username,sessionStatus[s.Status] || s.Status,trafficBytes(s.InputBytes),trafficBytes(s.OutputBytes),trafficNote(s),date(s.LastSeen),revokeReason[s.RevocationReason] || s.RevocationReason || '—',s.RevocationAttempts || 0,s.RevocationLast ? date(s.RevocationLast) : '—',[s.RevocationResponse,s.RevocationCause ? 'Error-Cause='+s.RevocationCause : '',s.RevocationError].filter(Boolean).join(' · ') || '—',s.RevocationReason && ['active','stale'].includes(s.Status) ? (s.RevocationNext ? date(s.RevocationNext) : 'В очереди') : '—']));
+  $('#session-select').replaceChildren();items.filter(s=>['active','stale'].includes(s.Status)).forEach((s,i)=>$('#session-select').add(new Option(s.NAS+' · '+s.ID+' · '+s.Username,JSON.stringify({NAS:s.NAS,ID:s.ID,MAC:s.MAC,Username:s.Username,Updated:s.Updated,Generation:s.Generation}))));
+}
+const listing={sessions:{page:1,request:0,filters:new URLSearchParams({limit:'50'})},events:{page:1,request:0,filters:new URLSearchParams({limit:'50'})}};
+async function loadListing(kind){
+ const state=listing[kind],request=++state.request;const params=new URLSearchParams(state.filters);params.set('page',state.page);
+ const summary=$('#'+kind+'-page-info');summary.textContent='Загрузка…';
+ $('#'+kind+'-prev').disabled=true;$('#'+kind+'-next').disabled=true;
+ if(kind==='sessions')$('#session-select').replaceChildren();
+ try{const r=await scopedFetch('/api/'+kind+'?'+params);if(!r.ok)throw new Error('Не удалось загрузить список: '+r.status);const data=await r.json();if(request!==state.request)return;
+ state.page=data.Page;const pages=Math.max(1,Math.ceil(data.Total/data.Limit));
+ summary.textContent='Найдено: '+data.Total+' · Страница '+data.Page+' из '+pages;
+ $('#'+kind+'-prev').disabled=data.Page<=1;$('#'+kind+'-next').disabled=data.Page>=pages;
+ if(kind==='sessions')renderSessions(data.Items);else table('#events-list',['Время','Источник','Идентификатор','Результат','Причина'],data.Items.map(e=>[date(e.Time),e.Source,e.Identity,e.Result,e.Reason]));
+ }catch(e){if(request!==state.request)return;summary.textContent=e.message;$('#'+kind+'-list').replaceChildren();}
+}
+for(const kind of ['sessions','events']){
+ const form=$('#'+kind+'-filter');
+ form.onsubmit=e=>{e.preventDefault();const params=new URLSearchParams();for(const [key,value] of new FormData(form)){if(!value)continue;if(key==='from'||key==='until'){const stamp=Math.floor(new Date(value).getTime()/1000);if(!Number.isFinite(stamp)){notice('Проверьте период',true);return;}params.set(key,stamp);}else params.set(key,value.trim());}if(params.has('from')&&params.has('until')&&Number(params.get('from'))>Number(params.get('until'))){notice('Начало периода позже окончания',true);return;}listing[kind].filters=params;listing[kind].page=1;loadListing(kind);};
+ form.onreset=()=>{listing[kind].filters=new URLSearchParams({limit:'50'});listing[kind].page=1;loadListing(kind);};
+ $('#'+kind+'-prev').onclick=()=>{listing[kind].page--;loadListing(kind);};
+ $('#'+kind+'-next').onclick=()=>{listing[kind].page++;loadListing(kind);};
+}

@@ -271,36 +271,12 @@ func (s *Store) DeviceList(ctx context.Context) ([]Device, error) {
 	return out, rows.Err()
 }
 func (s *Store) Events(ctx context.Context) ([]Event, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT occurred_at,source,identity,result,reason FROM auth_log ORDER BY occurred_at DESC LIMIT 200")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Event{}
-	for rows.Next() {
-		var v Event
-		if err = rows.Scan(&v.Time, &v.Source, &v.Identity, &v.Result, &v.Reason); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	page, err := s.EventsPage(ctx, ListFilter{Page: 1, Limit: 200})
+	return page.Items, err
 }
 func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT s.nas,s.session_id,s.mac,s.username,s.status,s.updated_at,COALESCE(g.reason,''),s.revoke_attempts,s.generation,s.last_seen,s.event_at,s.started_at,s.session_seconds,s.revoke_next,s.revoke_last,s.revoke_cause,s.revoke_response,s.revoke_error,s.input_bytes,s.output_bytes,s.input_gigawords,s.output_gigawords,s.traffic_warning FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas ORDER BY s.updated_at DESC LIMIT 200")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Session{}
-	for rows.Next() {
-		var v Session
-		if err = rows.Scan(&v.NAS, &v.ID, &v.MAC, &v.Username, &v.Status, &v.Updated, &v.RevocationReason, &v.RevocationAttempts, &v.Generation, &v.LastSeen, &v.EventAt, &v.StartedAt, &v.SessionSeconds, &v.RevocationNext, &v.RevocationLast, &v.RevocationCause, &v.RevocationResponse, &v.RevocationError, &v.InputBytes, &v.OutputBytes, &v.InputGigawords, &v.OutputGigawords, &v.TrafficWarning); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	page, err := s.SessionsPage(ctx, ListFilter{Page: 1, Limit: 200})
+	return page.Items, err
 }
 
 // SQL binds portable placeholders for transactions owned by other packages.
