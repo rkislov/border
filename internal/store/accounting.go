@@ -63,7 +63,7 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 		}
 		return tx.Commit()
 	}
-	if reset > 0 && e.At <= reset {
+	if reset > 0 && e.At < reset {
 		return ignore("event before NAS restart")
 	}
 	if e.Kind == "on" || e.Kind == "off" {
