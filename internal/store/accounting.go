@@ -14,6 +14,7 @@ type AccountingEvent struct {
 	Input, Output                     *TrafficCounter
 	NAS, ID, MAC, Username, Kind, Key string
 	Classes                           []string
+	AccountingKey                     string
 	At, Seconds                       int64
 	Timed, HasSeconds                 bool
 }
@@ -91,6 +92,12 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 			break
 		}
 		if err != sql.ErrNoRows {
+			return err
+		}
+	}
+	if token == "" {
+		token, err = s.vpnAccountingToken(ctx, tx, e, now)
+		if err != nil {
 			return err
 		}
 	}
@@ -212,6 +219,11 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 	if err = exec(`INSERT INTO sessions(nas,session_id,mac,username,status,updated_at,grant_token,generation,event_at,started_at,session_seconds,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
  ON CONFLICT(nas,session_id) DO UPDATE SET mac=excluded.mac,username=excluded.username,status=excluded.status,updated_at=excluded.updated_at,grant_token=excluded.grant_token,generation=excluded.generation,event_at=excluded.event_at,started_at=excluded.started_at,session_seconds=excluded.session_seconds,last_seen=excluded.last_seen`, e.NAS, e.ID, e.MAC, e.Username, status, now, token, generation, e.At, started, e.Seconds, min(e.At, now)); err != nil {
 		return err
+	}
+	if token != "" && e.AccountingKey != "" && len(e.Classes) == 0 {
+		if err = exec("UPDATE access_grants SET accounting_session=?,accounting_started=? WHERE token=? AND accounting_key=? AND accounting_session=''", e.ID, started, token, e.AccountingKey); err != nil {
+			return err
+		}
 	}
 	if err = exec("UPDATE sessions SET input_bytes=?,output_bytes=?,input_gigawords=?,output_gigawords=?,traffic_warning=? WHERE nas=? AND session_id=?", input, output, integer(inputWide), integer(outputWide), trafficWarning, e.NAS, e.ID); err != nil {
 		return err
