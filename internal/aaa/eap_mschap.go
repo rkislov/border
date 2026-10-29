@@ -163,6 +163,11 @@ func processVPN_EAP(ctx context.Context, s *store.Store, p *radius.Packet, host 
 		if e != nil {
 			return nil, e
 		}
+		if c.Dictionary == "mikrotik" {
+			if e = s.EnableVPNAccounting(ctx, token, vpnAccountingKey(p)); e != nil {
+				return nil, e
+			}
+		}
 		out.Attributes.Add(25, []byte(token))
 		if err = setAccountingInterval(ctx, s, host, out); err != nil {
 			return nil, err

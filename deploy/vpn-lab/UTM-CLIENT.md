@@ -39,12 +39,34 @@ Verified results:
 - Border receives Start/Stop for both users under NAS `127.0.0.2`, including
   the canonical domain username `samba-lab/domain-test`.
 
-**Unresolved accounting limitation:** these CHR IPsec sessions have an empty
-`grant_token` in Border despite the access grant being created. Start/Stop
-recording works, but policy-based automatic revocation has not been validated
-for these VPN sessions. Investigate the Class attribute in RouterOS IPsec
-accounting before claiming lifecycle enforcement. Do not correlate by username
-alone: concurrent SSH and VPN sessions may share an identity.
+**Class-less accounting compatibility:** CHR IPsec omits Class. Border now
+records the authenticated connection tuple for MikroTik EAP VPN grants and
+matches a timestamped Start against a unique recent grant for the same NAS,
+canonical user and exact tuple (NAS-IP, service, called/calling station,
+NAS-Identifier, port type and binary port ID). The grant can be claimed by one
+accounting session only. Later updates must match the claimed session and its
+start time. Class-based accounting retains its previous rules.
+
+The first Start must include Event-Timestamp and Acct-Session-Time <= 5 s;
+the authorization window is 30 s with a 2 s timestamp tolerance. Events older
+than 60 s or more than 5 s in the future are not correlated. Missing fields,
+unknown Class, ambiguous grants (including very rapid reconnects with the same
+tuple), and lost Start events are left unlinked rather than guessed. Previously
+unlinked sessions need a new connection; there is no username-only backfill.
+Synchronize NAS/server clocks. An unlinked session cannot receive policy-based
+automatic revocation; inspect its grant association during deployment.
+
+Live verification after migration 21:
+
+- Domain VPN Start linked to its `lab-domain-vpn` grant. Blocking `domain-test`
+  in Samba was detected by the normal background sync; automatic Disconnect
+  returned ACK, recorded `user blocked`, and removed the client IKE/IPsec SAs.
+- A separate local VPN session linked to `lab-local-vpn`. Its policy deadline
+  was shortened after connection (the original Session-Timeout was still 600 s).
+  At expiry the worker received Disconnect-ACK and recorded `policy expired`;
+  the client SAs disappeared. This verifies server-driven revocation rather
+  than relying on the NAS's original timeout.
+- The domain user was re-enabled and the original policy restored after tests.
 
 This proves Linux → CHR → Border → Samba interoperability. It does not establish
 native macOS or Windows compatibility. macOS currently selects Wi-Fi for the

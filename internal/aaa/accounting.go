@@ -15,6 +15,7 @@ import (
 
 func accountingEvent(p *radius.Packet, host string) (store.AccountingEvent, error) {
 	e := store.AccountingEvent{NAS: host, ID: rfc2866.AcctSessionID_GetString(p), Username: rfc2865.UserName_GetString(p), At: time.Now().Unix()}
+	e.AccountingKey = vpnAccountingKey(p)
 	e.MAC, _ = NormalizeMAC(rfc2865.CallingStationID_GetString(p))
 	fields := map[radius.Type]bool{}
 	parts := []string{}
