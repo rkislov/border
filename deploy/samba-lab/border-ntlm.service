@@ -1,0 +1,17 @@
+[Unit]
+Description=Border lab Samba NTLM helper
+After=docker.service
+Requires=docker.service
+[Service]
+ExecStart=/usr/bin/python3 /opt/border-samba-lab/ntlm-broker.py
+RuntimeDirectory=border-ntlm
+RuntimeDirectoryMode=0755
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX
+[Install]
+WantedBy=multi-user.target

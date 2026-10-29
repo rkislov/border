@@ -103,13 +103,13 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 		}
 		ids[b.ID] = true
 		priorities[b.Priority] = true
-		if b.Protocol != "pap" && b.Protocol != "eap" && b.Protocol != "mab" {
-			return fmt.Errorf("select PAP, EAP or MAB")
+		if b.Protocol != "pap" && b.Protocol != "eap" && b.Protocol != "mab" && b.Protocol != "mschapv2" {
+			return fmt.Errorf("select PAP, MS-CHAPv2, EAP or MAB")
 		}
 		if b.ServiceType < 0 || b.ServiceType > 255 || (b.NASPortType != nil && (*b.NASPortType < 0 || *b.NASPortType > 255)) || len(b.SSID) > 32 || strings.ContainsAny(b.SSID, "\x00\r\n") {
 			return fmt.Errorf("invalid request selector")
 		}
-		if b.IdentitySource != "" && b.Protocol != "pap" {
+		if b.IdentitySource != "" && b.Protocol != "pap" && b.Protocol != "mschapv2" {
 			return fmt.Errorf("domain selector requires PAP")
 		}
 		var source string
@@ -122,6 +122,9 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 		}
 		if source == "eap_tls" {
 			expected = "eap"
+		}
+		if b.Protocol == "mschapv2" && (source == "local" || source == "directory") {
+			expected = "mschapv2"
 		}
 		if expected != b.Protocol {
 			return fmt.Errorf("protocol does not match authentication source")
@@ -199,6 +202,9 @@ func (s *Store) selectPolicy(ctx context.Context, nas string, request PolicyRequ
 		}
 		if p.Authentication.Source == "eap_tls" {
 			expected = "eap"
+		}
+		if b.Protocol == "mschapv2" && (p.Authentication.Source == "local" || p.Authentication.Source == "directory") {
+			expected = "mschapv2"
 		}
 		if expected != b.Protocol {
 			return nil, true, fmt.Errorf("binding protocol no longer matches authentication source")

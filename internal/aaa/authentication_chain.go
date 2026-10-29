@@ -2,6 +2,7 @@ package aaa
 
 import (
 	"context"
+	"github.com/rkislov/border/internal/mschap"
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
@@ -93,4 +94,46 @@ func authenticateChain(ctx context.Context, s *store.Store, p *radius.Packet, b 
 		}
 	}
 	return user, groups, true, "chain completed"
+}
+
+// MS-CHAPv2 support is deliberately restricted to SSH accounts. TOTP,
+// VPN/MPPE and EAP are not silently downgraded.
+func authenticateMSCHAP(ctx context.Context, s *store.Store, p *radius.Packet, b *store.BoundPolicy, o Options, r *mschap.Request) (string, string, bool, string) {
+	wireUser := rfc2865.UserName_GetString(p)
+	login := strings.ToLower(wireUser)
+	if b.Authentication.Source == "local" && strings.HasPrefix(login, "local/") {
+		login = strings.TrimPrefix(login, "local/")
+	}
+	source := "local"
+	if b.Authentication.Source == "directory" {
+		source = b.Authentication.DomainID
+	}
+	user := source + "/" + login
+	if (b.Authentication.Source != "local" && b.Authentication.Source != "directory") || b.Access.Mode != "ssh" || o.Identities == nil || b.Authentication.ValidateChain() != nil || strings.ContainsAny(login, "/\\") || login == "" {
+		return user, "", false, "MS-CHAPv2 requires local or directory SSH policy"
+	}
+	// Reject unsupported factors before validating any credentials.
+	for _, step := range b.Authentication.Chain() {
+		if step != "primary" && step != "device" {
+			return user, "", false, "MS-CHAPv2 cannot satisfy required factor"
+		}
+	}
+	success := ""
+	for _, step := range b.Authentication.Chain() {
+		if step == "device" && !registeredDevice(ctx, s, p) {
+			return user, "", false, "step device rejected"
+		}
+		if step == "primary" {
+			var err error
+			if source == "local" {
+				success, err = o.Identities.VerifyLocalMSCHAP(ctx, login, wireUser, r)
+			} else {
+				success, err = o.Identities.VerifyDomainMSCHAP(ctx, source, login, wireUser, r)
+			}
+			if err != nil {
+				return user, "", false, "step primary rejected"
+			}
+		}
+	}
+	return user, success, true, "MS-CHAPv2 chain completed"
 }

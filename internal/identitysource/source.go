@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/directory"
+	"github.com/rkislov/border/internal/mschap"
 	"github.com/rkislov/border/internal/sms"
 	"github.com/rkislov/border/internal/store"
 	"golang.org/x/crypto/bcrypt"
@@ -23,6 +24,7 @@ import (
 var IDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 type Domain struct {
+	MSCHAPDomain                                       string
 	RevokeMissingUsers                                 bool
 	ID, Name                                           string
 	Enabled                                            bool
@@ -32,6 +34,7 @@ type Domain struct {
 }
 type LocalUser struct {
 	Username, Email, Password, Phone string
+	MSCHAPEnabled                    *bool
 	Enabled                          bool
 }
 type Service struct {
@@ -41,6 +44,9 @@ type Service struct {
 }
 
 func (d Domain) Validate() error {
+	if d.MSCHAPDomain != "" && !regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{0,14}$`).MatchString(d.MSCHAPDomain) {
+		return fmt.Errorf("invalid MS-CHAP NetBIOS domain")
+	}
 	if !IDPattern.MatchString(d.ID) || (d.ID == "local" || d.ID == "default") || d.Name == "" || len(d.Name) > 100 || len(d.Endpoints) == 0 || len(d.Endpoints) > 3 || d.BaseDN == "" || d.BindDN == "" || d.BindPassword == "" {
 		return fmt.Errorf("domain ID, name, 1–3 LDAP endpoints and bind configuration required")
 	}
@@ -159,28 +165,68 @@ func (s *Service) SaveLocal(ctx context.Context, u LocalUser) (result error) {
 	if !regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`).MatchString(u.Username) || len(u.Email) > 254 {
 		return fmt.Errorf("invalid local username or email")
 	}
-	if u.Password == "" {
-		r, err := s.Store.DB.ExecContext(ctx, s.Store.SQL("UPDATE local_users SET email=?,phone=?,enabled=? WHERE username=?"), u.Email, u.Phone, boolInt(u.Enabled), u.Username)
-		if err != nil {
-			return err
-		}
-		n, _ := r.RowsAffected()
-		if n != 1 {
-			return fmt.Errorf("password required for new user")
-		}
-		return nil
-	}
-	if len(u.Password) < 12 || len(u.Password) > 72 {
-		return fmt.Errorf("password: 12–72 bytes")
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+	tx, err := s.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	return s.Store.Exec(ctx, "INSERT INTO local_users(username,email,password_hash,enabled,phone) VALUES(?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET email=excluded.email,password_hash=excluded.password_hash,enabled=excluded.enabled,phone=excluded.phone", u.Username, u.Email, string(hash), boolInt(u.Enabled), u.Phone)
+	defer tx.Rollback()
+	var encrypted string
+	err = tx.QueryRowContext(ctx, s.Store.SQL("SELECT encrypted_hash FROM local_mschap_credentials WHERE username=?"), u.Username).Scan(&encrypted)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	enabled := encrypted != ""
+	if u.MSCHAPEnabled != nil {
+		enabled = *u.MSCHAPEnabled
+	}
+	if enabled && encrypted == "" && u.Password == "" {
+		return fmt.Errorf("enter password to enable MS-CHAPv2")
+	}
+	if u.Password == "" {
+		r, e := tx.ExecContext(ctx, s.Store.SQL("UPDATE local_users SET email=?,phone=?,enabled=? WHERE username=?"), u.Email, u.Phone, boolInt(u.Enabled), u.Username)
+		if e != nil {
+			return e
+		}
+		n, e := r.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if n != 1 {
+			return fmt.Errorf("password required for new user")
+		}
+	} else {
+		if len(u.Password) < 12 || len(u.Password) > 72 {
+			return fmt.Errorf("password: 12–72 bytes")
+		}
+		hash, e := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+		if e != nil {
+			return e
+		}
+		_, err = tx.ExecContext(ctx, s.Store.SQL("INSERT INTO local_users(username,email,password_hash,enabled,phone) VALUES(?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET email=excluded.email,password_hash=excluded.password_hash,enabled=excluded.enabled,phone=excluded.phone"), u.Username, u.Email, string(hash), boolInt(u.Enabled), u.Phone)
+		if err != nil {
+			return err
+		}
+		if enabled {
+			if s.Vault == nil {
+				return fmt.Errorf("credential vault unavailable")
+			}
+			nt := mschap.PasswordHash(u.Password)
+			encrypted = s.Vault.Seal(nt, "local-mschap/"+u.Username)
+			clear(nt)
+		}
+	}
+	if enabled {
+		_, err = tx.ExecContext(ctx, s.Store.SQL("INSERT INTO local_mschap_credentials(username,encrypted_hash) VALUES(?,?) ON CONFLICT(username) DO UPDATE SET encrypted_hash=excluded.encrypted_hash"), u.Username, encrypted)
+	} else {
+		_, err = tx.ExecContext(ctx, s.Store.SQL("DELETE FROM local_mschap_credentials WHERE username=?"), u.Username)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Service) Locals(ctx context.Context) ([]LocalUser, error) {
-	rows, err := s.Store.DB.QueryContext(ctx, "SELECT username,email,enabled,phone FROM local_users ORDER BY username")
+	rows, err := s.Store.DB.QueryContext(ctx, "SELECT username,email,enabled,phone,EXISTS(SELECT 1 FROM local_mschap_credentials m WHERE m.username=local_users.username) FROM local_users ORDER BY username")
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +234,9 @@ func (s *Service) Locals(ctx context.Context) ([]LocalUser, error) {
 	out := []LocalUser{}
 	for rows.Next() {
 		var u LocalUser
-		if err = rows.Scan(&u.Username, &u.Email, &u.Enabled, &u.Phone); err != nil {
+		var compatible bool
+		u.MSCHAPEnabled = &compatible
+		if err = rows.Scan(&u.Username, &u.Email, &u.Enabled, &u.Phone, &compatible); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -258,4 +306,28 @@ func (s *Service) Active(ctx context.Context, qualified string) bool {
 	}
 	err := s.Store.Row(ctx, "SELECT enabled FROM domains WHERE id=?", source).Scan(&n)
 	return err != sql.ErrNoRows && err == nil && n == 1
+}
+
+// VerifyLocalMSCHAP never derives an NT hash from bcrypt and never exports it.
+func (s *Service) VerifyLocalMSCHAP(ctx context.Context, login, wireUser string, r *mschap.Request) (success string, err error) {
+	started := time.Now()
+	defer func() { s.Store.Metrics.Finish("identity_auth", started, err) }()
+	if s.Vault == nil {
+		return "", fmt.Errorf("credential vault unavailable")
+	}
+	var encrypted string
+	err = s.Store.Row(ctx, "SELECT m.encrypted_hash FROM local_mschap_credentials m JOIN local_users u ON u.username=m.username WHERE u.username=? AND u.enabled=1", login).Scan(&encrypted)
+	if err != nil {
+		return "", fmt.Errorf("authentication failed")
+	}
+	hash, e := s.Vault.Open(encrypted, "local-mschap/"+login)
+	if e != nil {
+		return "", fmt.Errorf("authentication failed")
+	}
+	defer clear(hash)
+	success, ok := r.Verify(hash, wireUser)
+	if !ok {
+		return "", fmt.Errorf("authentication failed")
+	}
+	return success, nil
 }
