@@ -34,6 +34,9 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 	if a.Source == "eap_tls" && valid && b.Access.Mode == "network" && o.EAP != nil && len(p.Attributes.Get(79)) > 0 {
 		return processEAP(ctx, s, p, host, o.EAP, b)
 	}
+	if valid && b.Access.Mode == "vpn" && (a.Source == "local" || a.Source == "directory") && o.EAPMSCHAP != nil && len(p.Attributes.Get(79)) > 0 {
+		return processVPN_EAP(ctx, s, p, host, effective, b, o)
+	}
 	user := rfc2865.UserName_GetString(p)
 	var groups []string
 	reason := "policy unavailable"

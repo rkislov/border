@@ -1,0 +1,34 @@
+# Set BORDER_VPN_LAB_DIR to a private directory with prepared certificates/config.
+services:
+  server:
+    build: .
+    image: border-vpn-lab:local
+    container_name: border-vpn-server
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    networks:
+      lab:
+        ipv4_address: 172.30.181.2
+    volumes:
+      - ${BORDER_VPN_LAB_DIR:?Set private configuration directory}/server:/etc/swanctl:ro
+      - ${BORDER_VPN_LAB_DIR}/radius.conf:/etc/strongswan.d/charon/eap-radius.conf:ro
+      - ./start.sh:/start.sh:ro
+    command: [/bin/sh, /start.sh, server]
+  client:
+    image: border-vpn-lab:local
+    container_name: border-vpn-client
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    networks:
+      lab:
+        ipv4_address: 172.30.181.3
+    volumes:
+      - ${BORDER_VPN_LAB_DIR}/client:/etc/swanctl:ro
+      - ./start.sh:/start.sh:ro
+    command: [/bin/sh, /start.sh, client]
+networks:
+  lab:
+    name: border-vpn-lab
+    ipam:
+      config:
+        - subnet: 172.30.181.0/24

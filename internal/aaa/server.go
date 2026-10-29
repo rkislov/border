@@ -17,6 +17,7 @@ import (
 
 	"github.com/rkislov/border/internal/directory"
 	"github.com/rkislov/border/internal/eap"
+	"github.com/rkislov/border/internal/eapmschap"
 	"github.com/rkislov/border/internal/identitysource"
 	"github.com/rkislov/border/internal/mschap"
 	"github.com/rkislov/border/internal/store"
@@ -91,6 +92,7 @@ type Options struct {
 	Directory  directory.Authenticator
 	Network    NetworkVerifier
 	EAP        *eap.Engine
+	EAPMSCHAP  *eapmschap.Engine
 }
 
 func ServeAuthenticated(ctx context.Context, conn net.PacketConn, s *store.Store, workers int, accounting bool, verifier NetworkVerifier) error {

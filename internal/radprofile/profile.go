@@ -32,7 +32,7 @@ var Catalog = []Profile{
 	{"fortinet", "FortiGate / FortiOS", "Настройте remote group и accprofile override на устройстве.", []Attribute{{"Fortinet-Group-Name", 12356, 1, "string"}, {"Fortinet-Access-Profile", 12356, 6, "string"}}},
 	{"eltex", "Eltex", "Базовый профиль RFC; SSH-права задаются Service-Type. Специфические VSA требуют уточнения модели MES/ESR.", Standard},
 	{"openvpn", "OpenVPN", "Требуется RADIUS-плагин с PAP и Message-Authenticator. Наличие профиля не устанавливает плагин на VPN-сервер.", Standard},
-	{"strongswan", "strongSwan", "EAP-MSCHAPv2 ещё не реализован. Этот профиль пока справочный; VPN-авторизация недоступна.", Standard},
+	{"strongswan", "strongSwan", "IKEv2 с сертификатом сервера и EAP-MSCHAPv2 через eap-radius. Нужна VPN-политика с локальным или доменным паролем.", Standard},
 }
 
 func Lookup(id string) (Profile, bool) {
@@ -62,8 +62,8 @@ func (c Config) Validate() error {
 	if c.Dictionary == "keenetic" && c.Mode != "network" {
 		return fmt.Errorf("Keenetic profile currently supports network access only")
 	}
-	if c.Dictionary == "strongswan" && c.Mode != "network" {
-		return fmt.Errorf("strongSwan VPN EAP authentication is not implemented yet")
+	if c.Dictionary == "strongswan" && c.Mode == "ssh" {
+		return fmt.Errorf("strongSwan does not support SSH authorization")
 	}
 	return nil
 }

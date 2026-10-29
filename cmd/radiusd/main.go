@@ -24,6 +24,7 @@ import (
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/directory"
 	"github.com/rkislov/border/internal/eap"
+	"github.com/rkislov/border/internal/eapmschap"
 	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/identitysource"
 	"github.com/rkislov/border/internal/mail"
@@ -307,7 +308,9 @@ func command() *cobra.Command {
 		defer stop()
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		rootOptions := aaa.Options{Network: codesVerifier(codes), EAP: eapEngine, Directory: domain, Identities: identities}
+		vpnEAP := eapmschap.New()
+		defer vpnEAP.Close()
+		rootOptions := aaa.Options{EAPMSCHAP: vpnEAP, Network: codesVerifier(codes), EAP: eapEngine, Directory: domain, Identities: identities}
 		if codes != nil {
 			rootOptions.TOTP = codes
 		}

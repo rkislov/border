@@ -185,6 +185,12 @@ func setMPPEKeys(packet *radius.Packet, key []byte) error {
 	if len(key) != 128 {
 		return errors.New("invalid EAP key material")
 	}
+	return setMPPEPair(packet, key[:32], key[32:64])
+}
+func setMPPEPair(packet *radius.Packet, receive, send []byte) error {
+	if len(receive) == 0 || len(receive) != len(send) || len(receive) > 32 {
+		return errors.New("invalid MPPE keys")
+	}
 	var salts [4]byte
 	if _, err := rand.Read(salts[:]); err != nil {
 		return err
@@ -195,7 +201,7 @@ func setMPPEKeys(packet *radius.Packet, key []byte) error {
 		salts[3] ^= 1
 	}
 	for i, kind := range []byte{17, 16} {
-		encrypted, err := radius.NewTunnelPassword(key[i*32:(i+1)*32], salts[i*2:(i+1)*2], packet.Secret, packet.Authenticator[:])
+		encrypted, err := radius.NewTunnelPassword([][]byte{receive, send}[i], salts[i*2:(i+1)*2], packet.Secret, packet.Authenticator[:])
 		if err != nil {
 			return err
 		}

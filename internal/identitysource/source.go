@@ -310,24 +310,29 @@ func (s *Service) Active(ctx context.Context, qualified string) bool {
 
 // VerifyLocalMSCHAP never derives an NT hash from bcrypt and never exports it.
 func (s *Service) VerifyLocalMSCHAP(ctx context.Context, login, wireUser string, r *mschap.Request) (success string, err error) {
+	success, key, err := s.VerifyLocalMSCHAPKeys(ctx, login, wireUser, r)
+	clear(key)
+	return success, err
+}
+func (s *Service) VerifyLocalMSCHAPKeys(ctx context.Context, login, wireUser string, r *mschap.Request) (success string, key []byte, err error) {
 	started := time.Now()
 	defer func() { s.Store.Metrics.Finish("identity_auth", started, err) }()
 	if s.Vault == nil {
-		return "", fmt.Errorf("credential vault unavailable")
+		return "", nil, fmt.Errorf("credential vault unavailable")
 	}
 	var encrypted string
 	err = s.Store.Row(ctx, "SELECT m.encrypted_hash FROM local_mschap_credentials m JOIN local_users u ON u.username=m.username WHERE u.username=? AND u.enabled=1", login).Scan(&encrypted)
 	if err != nil {
-		return "", fmt.Errorf("authentication failed")
+		return "", nil, fmt.Errorf("authentication failed")
 	}
 	hash, e := s.Vault.Open(encrypted, "local-mschap/"+login)
 	if e != nil {
-		return "", fmt.Errorf("authentication failed")
+		return "", nil, fmt.Errorf("authentication failed")
 	}
 	defer clear(hash)
 	success, ok := r.Verify(hash, wireUser)
 	if !ok {
-		return "", fmt.Errorf("authentication failed")
+		return "", nil, fmt.Errorf("authentication failed")
 	}
-	return success, nil
+	return success, mschap.SessionKeyFromHash(hash, r.Response), nil
 }

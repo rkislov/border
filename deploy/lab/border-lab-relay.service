@@ -1,0 +1,17 @@
+[Unit]
+Description=Border laboratory RADIUS and CoA relay
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=roman
+ExecStart=/usr/bin/python3 -u /home/roman/border-lab/relay-supervised.py remote
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_INET AF_UNIX
+[Install]
+WantedBy=multi-user.target

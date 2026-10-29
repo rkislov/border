@@ -109,11 +109,11 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 		if b.ServiceType < 0 || b.ServiceType > 255 || (b.NASPortType != nil && (*b.NASPortType < 0 || *b.NASPortType > 255)) || len(b.SSID) > 32 || strings.ContainsAny(b.SSID, "\x00\r\n") {
 			return fmt.Errorf("invalid request selector")
 		}
-		if b.IdentitySource != "" && b.Protocol != "pap" && b.Protocol != "mschapv2" {
-			return fmt.Errorf("domain selector requires PAP")
+		if b.IdentitySource != "" && b.Protocol != "pap" && b.Protocol != "mschapv2" && b.Protocol != "eap" {
+			return fmt.Errorf("domain selector requires password authentication")
 		}
-		var source string
-		if err := s.Row(ctx, "SELECT a.source FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", b.PolicyID).Scan(&source); err != nil {
+		var source, mode string
+		if err := s.Row(ctx, "SELECT a.source,p.mode FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", b.PolicyID).Scan(&source, &mode); err != nil {
 			return fmt.Errorf("unknown access policy")
 		}
 		expected := "pap"
@@ -125,6 +125,9 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 		}
 		if b.Protocol == "mschapv2" && (source == "local" || source == "directory") {
 			expected = "mschapv2"
+		}
+		if b.Protocol == "eap" && mode == "vpn" && (source == "local" || source == "directory") {
+			expected = "eap"
 		}
 		if expected != b.Protocol {
 			return fmt.Errorf("protocol does not match authentication source")
@@ -205,6 +208,9 @@ func (s *Store) selectPolicy(ctx context.Context, nas string, request PolicyRequ
 		}
 		if b.Protocol == "mschapv2" && (p.Authentication.Source == "local" || p.Authentication.Source == "directory") {
 			expected = "mschapv2"
+		}
+		if b.Protocol == "eap" && p.Access.Mode == "vpn" && (p.Authentication.Source == "local" || p.Authentication.Source == "directory") {
+			expected = "eap"
 		}
 		if expected != b.Protocol {
 			return nil, true, fmt.Errorf("binding protocol no longer matches authentication source")

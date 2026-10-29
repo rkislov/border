@@ -21,14 +21,19 @@ import (
 // The helper path is host configuration, never tenant-controlled. Input travels
 // over stdin, not a shell or process arguments. No domain password is stored.
 func (s *Service) VerifyDomainMSCHAP(ctx context.Context, domain, login, wireUser string, r *mschap.Request) (string, error) {
+	success, key, err := s.VerifyDomainMSCHAPKeys(ctx, domain, login, wireUser, r)
+	clear(key)
+	return success, err
+}
+func (s *Service) VerifyDomainMSCHAPKeys(ctx context.Context, domain, login, wireUser string, r *mschap.Request) (string, []byte, error) {
 	fail := fmt.Errorf("domain MS-CHAPv2 authentication failed")
 	d, err := s.Domain(ctx, domain)
 	if err != nil || !d.Enabled || d.MSCHAPDomain == "" {
-		return "", fail
+		return "", nil, fail
 	}
 	helper := os.Getenv("BORDER_NTLM_AUTH")
 	if !filepath.IsAbs(helper) {
-		return "", fail
+		return "", nil, fail
 	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -39,7 +44,7 @@ func (s *Service) VerifyDomainMSCHAP(ctx context.Context, domain, login, wireUse
 	var output boundedNTLMOutput
 	cmd.Stdout = &output
 	if err = cmd.Run(); err != nil {
-		return "", fail
+		return "", nil, fail
 	}
 	authenticated := false
 	var key []byte
@@ -49,23 +54,23 @@ func (s *Service) VerifyDomainMSCHAP(ctx context.Context, domain, login, wireUse
 		}
 		if strings.HasPrefix(line, "User-Session-Key: ") {
 			if key != nil {
-				return "", fail
+				return "", nil, fail
 			}
 			key, err = hex.DecodeString(strings.TrimPrefix(line, "User-Session-Key: "))
 			if err != nil {
-				return "", fail
+				return "", nil, fail
 			}
 		}
 	}
 	defer clear(key)
 	if !authenticated || len(key) != 16 {
-		return "", fail
+		return "", nil, fail
 	}
 	enabled, err := s.AccountEnabled(ctx, domain+"/"+login)
 	if err != nil || !enabled {
-		return "", fail
+		return "", nil, fail
 	}
-	return r.AuthenticatorResponse(key, wireUser), nil
+	return r.AuthenticatorResponse(key, wireUser), mschap.SessionKey(key, r.Response), nil
 }
 
 type boundedNTLMOutput struct{ bytes.Buffer }
