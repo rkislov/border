@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/rkislov/border/internal/mschap"
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
@@ -11,7 +12,13 @@ import (
 
 func selectPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host string) (*store.BoundPolicy, bool, error) {
 	request := store.PolicyRequest{Protocol: "pap", Username: rfc2865.UserName_GetString(p)}
-	if len(p.Attributes.Get(79)) > 0 {
+	ms, err := mschap.Parse(p)
+	if err != nil {
+		return nil, true, err
+	}
+	if ms != nil {
+		request.Protocol = "mschapv2"
+	} else if len(p.Attributes.Get(79)) > 0 {
 		request.Protocol = "eap"
 	} else if _, e := NormalizeMAC(request.Username); e == nil {
 		request.Protocol = "mab"

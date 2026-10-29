@@ -21,7 +21,7 @@ func (a *app) policyDiagnostic(w http.ResponseWriter, r *http.Request) {
 	}
 	_, ipErr := netip.ParseAddr(input.NAS)
 	q := input.PolicyRequest
-	if ipErr != nil || (q.Protocol != "pap" && q.Protocol != "mab" && q.Protocol != "eap") || len(q.Username) > 253 || len(q.SSID) > 32 || strings.ContainsAny(q.Username+q.SSID, "\x00\r\n") || q.ServiceType < 0 || q.ServiceType > 255 || (q.NASPortType != nil && (*q.NASPortType < 0 || *q.NASPortType > 255)) {
+	if ipErr != nil || (q.Protocol != "pap" && q.Protocol != "mab" && q.Protocol != "eap" && q.Protocol != "mschapv2") || len(q.Username) > 253 || len(q.SSID) > 32 || strings.ContainsAny(q.Username+q.SSID, "\x00\r\n") || q.ServiceType < 0 || q.ServiceType > 255 || (q.NASPortType != nil && (*q.NASPortType < 0 || *q.NASPortType > 255)) {
 		http.Error(w, "invalid policy selectors", 400)
 		return
 	}

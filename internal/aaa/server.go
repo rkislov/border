@@ -18,6 +18,7 @@ import (
 	"github.com/rkislov/border/internal/directory"
 	"github.com/rkislov/border/internal/eap"
 	"github.com/rkislov/border/internal/identitysource"
+	"github.com/rkislov/border/internal/mschap"
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
@@ -243,13 +244,9 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 	if err != nil {
 		return nil, errors.New("NAS profile unavailable")
 	}
-	for _, a := range p.Attributes {
-		if a.Type == 26 {
-			vendor, data, e := radius.VendorSpecific(a.Attribute)
-			if e == nil && vendor == 311 && len(data) > 0 && (data[0] == 1 || data[0] == 11 || data[0] == 25) {
-				return nil, errors.New("MSCHAP is not supported")
-			}
-		}
+	ms, err := mschap.Parse(p)
+	if err != nil {
+		return nil, err
 	}
 	if len(p.Attributes.Get(3)) > 0 {
 		return nil, errors.New("CHAP is not supported")
@@ -261,7 +258,7 @@ func ProcessWithOptions(ctx context.Context, s *store.Store, raw []byte, addr ne
 	if bound != nil {
 		return processPolicy(ctx, s, p, host, profile, bound, options)
 	}
-	if configured {
+	if configured || ms != nil {
 		out := p.Response(radius.CodeAccessReject)
 		for _, a := range p.Attributes {
 			if a.Type == 33 {

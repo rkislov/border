@@ -170,3 +170,46 @@ func accountEnabled(entry *ldap.Entry) (bool, error) {
 	}
 	return false, fmt.Errorf("disable flag unavailable")
 }
+
+func (l *LDAP) AccountGroups(ctx context.Context, user string) ([]string, error) {
+	conn, err := ldap.DialURL(l.URL, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}), ldap.DialWithTLSConfig(l.TLS))
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	conn.SetTimeout(5 * time.Second)
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	if strings.HasPrefix(l.URL, "ldap://") {
+		if err = conn.StartTLS(l.TLS); err != nil {
+			return nil, err
+		}
+	}
+	if err = conn.Bind(l.BindDN, l.BindPassword); err != nil {
+		return nil, err
+	}
+	result, err := conn.Search(ldap.NewSearchRequest(l.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 5, false, "("+l.UserAttribute+"="+ldap.EscapeFilter(user)+")", []string{"memberOf", "userAccountControl", "nsAccountLock", "accountExpires", "krbPrincipalExpiration"}, nil))
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Referrals) != 0 {
+		return nil, fmt.Errorf("account status referral unresolved")
+	}
+	if len(result.Entries) == 0 {
+		return nil, ErrAccountNotFound
+	}
+	if len(result.Entries) != 1 {
+		return nil, fmt.Errorf("account status unknown")
+	}
+	entry := result.Entries[0]
+	enabled, err := accountEnabled(entry)
+	if err != nil || !enabled {
+		return nil, fmt.Errorf("account unavailable")
+	}
+	for _, a := range entry.Attributes {
+		if strings.HasPrefix(strings.ToLower(a.Name), "memberof;range=") {
+			return nil, fmt.Errorf("incomplete group list")
+		}
+	}
+	return entry.GetAttributeValues("memberOf"), nil
+}

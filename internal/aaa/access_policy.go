@@ -3,6 +3,7 @@ package aaa
 import (
 	"context"
 	"fmt"
+	"github.com/rkislov/border/internal/mschap"
 	"github.com/rkislov/border/internal/radprofile"
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
@@ -36,8 +37,24 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 	user := rfc2865.UserName_GetString(p)
 	var groups []string
 	reason := "policy unavailable"
+	ms, parseErr := mschap.Parse(p)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	msSuccess := ""
 	if valid {
-		user, groups, valid, reason = authenticateChain(ctx, s, p, b, o)
+		if ms != nil {
+			user, msSuccess, valid, reason = authenticateMSCHAP(ctx, s, p, b, o, ms)
+			if valid && b.Authentication.Source == "directory" {
+				groups, err = o.Identities.DomainGroups(ctx, user)
+				if err != nil {
+					valid = false
+					reason = "directory groups unavailable"
+				}
+			}
+		} else {
+			user, groups, valid, reason = authenticateChain(ctx, s, p, b, o)
+		}
 	}
 
 	if valid {
@@ -65,6 +82,11 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 	}
 	if valid {
 		out = p.Response(radius.CodeAccessAccept)
+		if ms != nil {
+			if err = ms.AddSuccess(out, msSuccess); err != nil {
+				return nil, err
+			}
+		}
 		c.Mode = b.Access.Mode
 		if c.Mode == "network" {
 			if err = setPolicyVLAN(out, b.VLAN); err != nil {

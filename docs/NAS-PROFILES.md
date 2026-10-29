@@ -9,11 +9,11 @@
 
 Для SSH/VPN доступны коды Border или пароль настроенного AD/FreeIPA (LDAP с TLS). Пустое разрешение, неверный пароль, MAB, CHAP и EAP в этих двух режимах не дают доступ. Пользователи панели управления не становятся администраторами NAS. Совместное обслуживание сети, SSH и VPN с одного IP с автоматическим разделением запросов пока не реализовано.
 
-PAP между NAS и Border требует защищённой сети или VPN-транспорта. Каждый Access-Request должен содержать Message-Authenticator. RadSec, MSCHAPv2, PEAP и TTLS пока не реализованы. Профиль strongSwan справочный; его VPN-режим заблокирован до реализации и тестирования EAP. OpenVPN требует отдельно установленного совместимого RADIUS-плагина.
+PAP между NAS и Border требует защищённой сети или VPN-транспорта. Каждый Access-Request должен содержать Message-Authenticator. MS-CHAPv2 реализован для SSH с политикой доступа; для домена нужен настроенный Samba/winbind helper и LDAP. RadSec, PEAP и TTLS пока не реализованы. Профиль strongSwan справочный; его VPN-режим заблокирован до реализации и тестирования EAP. OpenVPN требует отдельно установленного совместимого RADIUS-плагина.
 
 ## Атрибуты
 
-- MikroTik: Mikrotik-Group (14988:3), существующая локальная группа RouterOS.
+- MikroTik: Mikrotik-Group (14988:3), существующая локальная группа RouterOS. SSH-вход RouterOS 7.23.8 через MS-CHAPv2 проверен на CHR: локальные пользователи с включённой совместимостью и доменные пользователи через Samba/winbind. См. [проверку CHR в UTM](MIKROTIK-UTM.md).
 - Cisco IOS/IOS XE: Cisco-AVPair (9:1), shell:priv-lvl для SSH; device-traffic-class=voice только в сетевом профиле Cisco.
 - Huawei: Huawei-Exec-Privilege (2011:29). Уровень должен поддерживаться моделью и прошивкой.
 - FortiGate: Fortinet-Group-Name (12356:1), Fortinet-Access-Profile (12356:6). Remote group и профиль настраиваются также на FortiGate.
