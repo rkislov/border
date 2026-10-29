@@ -71,3 +71,5 @@ passes after adding VPN bindings. RouterOS adapter/AAA race tests, Go vet and
 deployed API health/search/pagination smoke checks pass. Native-client tunnel,
 traffic and revocation tests are pending profile installation on macOS and
 availability of Windows. Server setup alone does not prove client compatibility.
+
+Linux VM interoperability and CHR fixes are documented in [UTM-CLIENT.md](../UTM-CLIENT.md). Native-client validation remains pending.
