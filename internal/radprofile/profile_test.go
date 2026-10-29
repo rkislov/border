@@ -36,7 +36,13 @@ func TestVendorAuthorizationEncoding(t *testing.T) {
 	}
 }
 func TestProfilesValidate(t *testing.T) {
-	for _, id := range []string{"keenetic", "strongswan"} {
+	if (Config{Dictionary: "strongswan", Mode: "vpn", Credential: "directory"}).Validate() != nil {
+		t.Fatal("VPN profile rejected")
+	}
+	if (Config{Dictionary: "strongswan", Mode: "ssh", Credential: "directory"}).Validate() == nil {
+		t.Fatal("SSH profile accepted")
+	}
+	for _, id := range []string{"keenetic"} {
 		if (Config{Dictionary: id, Mode: "vpn", Credential: "codes"}).Validate() == nil {
 			t.Fatal("unsupported VPN accepted")
 		}

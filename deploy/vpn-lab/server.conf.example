@@ -1,0 +1,31 @@
+connections {
+ lab {
+  version = 2
+  local_addrs = 172.30.181.2
+  proposals = aes256-sha256-modp2048
+  over_time = 30s
+  rand_time = 0s
+  pools = lab
+  local {
+   auth = pubkey
+   certs = server.pem
+   id = vpn.lab.border.test
+  }
+  remote {
+   auth = eap-radius
+   eap_id = %any
+  }
+  children {
+   net {
+    local_ts = 10.181.0.1/32
+    remote_ts = dynamic
+    esp_proposals = aes256-sha256
+   }
+  }
+ }
+}
+pools {
+ lab {
+  addrs = 10.181.0.10-10.181.0.20
+ }
+}

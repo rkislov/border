@@ -13,6 +13,7 @@ import (
 	"github.com/rkislov/border/internal/aaa"
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/eap"
+	"github.com/rkislov/border/internal/eapmschap"
 	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/identitysource"
 	"github.com/rkislov/border/internal/notification"
@@ -192,7 +193,7 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 		return fail(err)
 	}
 	r.engine = engine
-	r.Options = aaa.Options{Network: codes, EAP: engine, Directory: identities, Identities: identities, TOTP: codes}
+	r.Options = aaa.Options{EAPMSCHAP: eapmschap.New(), Network: codes, EAP: engine, Directory: identities, Identities: identities, TOTP: codes}
 	r.Admin = web.HandlerWithOptions(s, manager, nil, m.RequireMTLS, guests)
 	r.Portal = selfservice.New(identities, codes, manager, portalURL, guests).Handler()
 	// Manager.Close owns the cleanup lifecycle, independent of create request cancellation.
@@ -207,6 +208,9 @@ func (r *Runtime) close() {
 	}
 	if r.guest != nil {
 		r.guest.Close()
+	}
+	if r.Options.EAPMSCHAP != nil {
+		r.Options.EAPMSCHAP.Close()
 	}
 	if r.engine != nil {
 		r.engine.Close()

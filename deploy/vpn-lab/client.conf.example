@@ -1,0 +1,33 @@
+connections {
+ lab {
+  version = 2
+  local_addrs = 172.30.181.3
+  remote_addrs = 172.30.181.2
+  proposals = aes256-sha256-modp2048
+  over_time = 30s
+  rand_time = 0s
+  vips = 0.0.0.0
+  local {
+   auth = eap-mschapv2
+   id = local/example
+   eap_id = local/example
+  }
+  remote {
+   auth = pubkey
+   id = vpn.lab.border.test
+  }
+  children {
+   net {
+    local_ts = dynamic
+    remote_ts = 10.181.0.1/32
+    esp_proposals = aes256-sha256
+   }
+  }
+ }
+}
+secrets {
+ eap {
+  id = local/example
+  secret = REPLACE_WITH_TEST_USER_PASSWORD
+ }
+}

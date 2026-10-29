@@ -13,7 +13,8 @@ Border `0.5.9-dev-mschap` развёрнут на сервере с резерв
 - Accounting Start/Stop поступает в Border; поиск, пагинация, health/metrics
   прошли smoke-проверку после обновления.
 - MS-CHAPv2 не обходит TOTP: такая цепочка получает отказ. VPN/MPPE и PEAP
-  этим изменением не реализованы. FreeRADIUS не установлен.
+  этим изменением не реализованы. Для отдельной реализации IKEv2 VPN см.
+  [EAP-MSCHAPv2](VPN-EAP-MSCHAPV2.md). FreeRADIUS не установлен.
 
 Домен создан в Docker (`border-samba-lab`); LDAPS опубликован только на
 `127.0.0.1:1636`. Base DN для стенда —
@@ -189,3 +190,12 @@ RouterOS не показывает Acct-Session-Id в `/user active`. Сопос
 смену поколения сессии, неподтверждённое удаление и запуск резервного пути только
 после аутентифицированного NAK 406. Пройдены `go test -race ./...`, повторные
 тесты затронутых пакетов, `go vet ./...` и проверка синтаксиса JavaScript.
+
+
+### Устойчивость стенда (2026-10-29)
+
+Ручные процессы заменены LaunchAgents `ru.kislovs.border.lab-relay` и
+`ru.kislovs.border.lab-tunnel` на Mac и `border-lab-relay.service` на сервере.
+После принудительного SIGKILL всех трёх процессов службы перезапустились;
+доменный SSH-вход и последующее отключение через CoA/SSH-адаптер прошли.
+Подробности и установщик: [deploy/lab](../deploy/lab/README.md).
