@@ -34,7 +34,7 @@ func (a *app) sessionAction(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]bool{"Queued": true})
 		return
 	}
-	result, err := aaa.ChangeSession(r.Context(), a.s, v.NAS, v.ID, v.Action, v.VLAN, store.Session{NAS: v.NAS, ID: v.ID, MAC: v.MAC, Username: v.Username, Updated: v.Updated, Generation: v.Generation})
+	result, err := aaa.ChangeSessionWithFallback(r.Context(), a.s, v.NAS, v.ID, v.Action, v.VLAN, a.routerOS.Disconnect, store.Session{NAS: v.NAS, ID: v.ID, MAC: v.MAC, Username: v.Username, Updated: v.Updated, Generation: v.Generation})
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return

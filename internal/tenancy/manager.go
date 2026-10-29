@@ -17,6 +17,7 @@ import (
 	"github.com/rkislov/border/internal/identitysource"
 	"github.com/rkislov/border/internal/notification"
 	"github.com/rkislov/border/internal/pki"
+	"github.com/rkislov/border/internal/routeros"
 	"github.com/rkislov/border/internal/selfservice"
 	"github.com/rkislov/border/internal/store"
 	"github.com/rkislov/border/internal/web"
@@ -196,7 +197,7 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 	r.Portal = selfservice.New(identities, codes, manager, portalURL, guests).Handler()
 	// Manager.Close owns the cleanup lifecycle, independent of create request cancellation.
 	stopGuests := guests.StartCleanup(context.Background())
-	stopRevocations := aaa.StartRevocations(context.Background(), s, identities.SyncAccountStatus)
+	stopRevocations := aaa.StartRevocationsWithFallback(context.Background(), s, (&routeros.Service{Store: s, Vault: codes.Vault}).Disconnect, identities.SyncAccountStatus)
 	r.stop = func() { stopRevocations(); stopGuests() }
 	return r, nil
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/rkislov/border/internal/mail"
 	"github.com/rkislov/border/internal/notification"
 	"github.com/rkislov/border/internal/pki"
+	"github.com/rkislov/border/internal/routeros"
 	"github.com/rkislov/border/internal/selfservice"
 	"github.com/rkislov/border/internal/store"
 	"github.com/rkislov/border/internal/tenancy"
@@ -354,7 +355,11 @@ func command() *cobra.Command {
 			extraServers = append(extraServers, challengeServer)
 			starts = append(starts, func() error { return challengeServer.Serve(challengeListener) })
 		}
-		stopRevocations := aaa.StartRevocations(ctx, s, identities.SyncAccountStatus)
+		management := &routeros.Service{Store: s}
+		if codes != nil {
+			management.Vault = codes.Vault
+		}
+		stopRevocations := aaa.StartRevocationsWithFallback(ctx, s, management.Disconnect, identities.SyncAccountStatus)
 		defer stopRevocations()
 		if guests != nil {
 			stopCleanup := guests.StartCleanup(ctx)

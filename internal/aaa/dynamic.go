@@ -26,6 +26,15 @@ type DynamicResult struct {
 // ChangeSession addresses only an active recorded session on a registered NAS.
 // Authentication and Message-Authenticator follow RFC 5176 section 3.4.
 func ChangeSession(ctx context.Context, s *store.Store, nas, id, action string, vlan int, expected ...store.Session) (resultValue DynamicResult, resultErr error) {
+	return changeSession(ctx, s, nas, id, action, vlan, nil, expected...)
+}
+
+type DisconnectFallback func(context.Context, store.Session) (bool, error)
+
+func ChangeSessionWithFallback(ctx context.Context, s *store.Store, nas, id, action string, vlan int, fallback DisconnectFallback, expected ...store.Session) (DynamicResult, error) {
+	return changeSession(ctx, s, nas, id, action, vlan, fallback, expected...)
+}
+func changeSession(ctx context.Context, s *store.Store, nas, id, action string, vlan int, fallback DisconnectFallback, expected ...store.Session) (resultValue DynamicResult, resultErr error) {
 	started := time.Now()
 	defer func() {
 		outcome := "nak"
@@ -42,8 +51,8 @@ func ChangeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 	}
 	var secret, mac, username, grantToken, generation string
 	var port int
-	var updated int64
-	if err := s.Row(ctx, "SELECT n.secret,n.coa_port,s.mac,s.username,s.updated_at,s.grant_token,s.generation FROM sessions s JOIN nas n ON n.address=s.nas WHERE s.nas=? AND s.session_id=? AND s.status IN ('active','stale')", nas, id).Scan(&secret, &port, &mac, &username, &updated, &grantToken, &generation); err != nil {
+	var updated, startedAt int64
+	if err := s.Row(ctx, "SELECT n.secret,n.coa_port,s.mac,s.username,s.updated_at,s.grant_token,s.generation,s.started_at FROM sessions s JOIN nas n ON n.address=s.nas WHERE s.nas=? AND s.session_id=? AND s.status IN ('active','stale')", nas, id).Scan(&secret, &port, &mac, &username, &updated, &grantToken, &generation, &startedAt); err != nil {
 		return DynamicResult{}, fmt.Errorf("active session on registered NAS required")
 	}
 	if len(expected) > 0 {
@@ -104,10 +113,10 @@ func ChangeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 	if err != nil {
 		return DynamicResult{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	exchangeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	client := &radius.Client{Retry: time.Second, MaxPacketErrors: 3}
-	response, err := client.Exchange(ctx, request, net.JoinHostPort(nas, strconv.Itoa(port)))
+	response, err := client.Exchange(exchangeCtx, request, net.JoinHostPort(nas, strconv.Itoa(port)))
 	if err != nil {
 		return DynamicResult{}, fmt.Errorf("NAS did not return an authenticated response")
 	}
@@ -154,6 +163,20 @@ func ChangeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 	}
 	if err = s.Audit(ctx, "web", nas+"/"+id, outcome, fmt.Sprintf("%s %s Error-Cause=%d", action, result.Code, result.ErrorCause)); err != nil {
 		return DynamicResult{}, fmt.Errorf("dynamic authorization completed but audit failed")
+	}
+	if !result.Acknowledged && result.ErrorCause == 406 && action == "disconnect" && fallback != nil {
+		confirmed, e := fallback(ctx, store.Session{NAS: nas, ID: id, MAC: mac, Username: username, Updated: updated, GrantToken: grantToken, Generation: generation, StartedAt: startedAt})
+		if e != nil {
+			return result, e
+		}
+		if confirmed {
+			result.Acknowledged = true
+			result.Code = "RouterOS-SSH-Disconnect"
+			result.ErrorCause = 0
+			if e = s.Audit(ctx, "routeros", nas+"/"+id, "acknowledged", "management SSH session removal verified"); e != nil {
+				return result, fmt.Errorf("RouterOS disconnected session but audit failed")
+			}
+		}
 	}
 	if result.Acknowledged && action == "disconnect" {
 		if err = s.ConfirmDisconnect(ctx, store.Session{NAS: nas, ID: id, MAC: mac, Username: username, GrantToken: grantToken, Generation: generation}); err != nil {

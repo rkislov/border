@@ -14,7 +14,7 @@ import (
 )
 
 func TestDynamicAuthorization(t *testing.T) {
-	for _, mode := range []string{"disconnect", "vlan", "nak", "invalid-ma", "wrong-id", "stale-time", "bad-authenticator"} {
+	for _, mode := range []string{"disconnect", "vlan", "nak", "unsupported", "invalid-ma", "wrong-id", "stale-time", "bad-authenticator"} {
 		t.Run(mode, func(t *testing.T) {
 			s := database(t)
 			ctx := t.Context()
@@ -79,12 +79,15 @@ func TestDynamicAuthorization(t *testing.T) {
 					t.Error("missing replay timestamp")
 					return
 				}
-				if mode == "nak" {
+				if mode == "nak" || mode == "unsupported" {
 					code = radius.CodeDisconnectNAK
 				}
 				reply := p.Response(code)
 				if mode == "nak" {
 					reply.Attributes.Add(101, []byte{0, 0, 1, 247})
+				}
+				if mode == "unsupported" {
+					reply.Attributes.Add(101, []byte{0, 0, 1, 150})
 				}
 				if mode == "wrong-id" {
 					reply.Identifier++
@@ -120,10 +123,23 @@ func TestDynamicAuthorization(t *testing.T) {
 			}
 			runCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 			defer cancel()
-			result, err := ChangeSession(runCtx, s, "127.0.0.1", "session-1", action, 200)
+			called := false
+			result, err := ChangeSessionWithFallback(runCtx, s, "127.0.0.1", "session-1", action, 200, func(ctx context.Context, v store.Session) (bool, error) {
+				called = true
+				if v.Generation == "" || v.StartedAt == 0 {
+					t.Fatal("missing session snapshot")
+				}
+				return true, nil
+			})
+			if called != (mode == "unsupported") {
+				t.Fatal("fallback invoked without authenticated Unsupported Extension")
+			}
+			if mode == "unsupported" && result.Code != "RouterOS-SSH-Disconnect" {
+				t.Fatal(result)
+			}
 			<-done
 			switch mode {
-			case "disconnect", "vlan":
+			case "disconnect", "vlan", "unsupported":
 				if err != nil || !result.Acknowledged {
 					t.Fatalf("%+v %v", result, err)
 				}
@@ -140,7 +156,7 @@ func TestDynamicAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (sessions[0].Status == "disconnect-ack") != (mode == "disconnect") {
+			if (sessions[0].Status == "disconnect-ack") != (mode == "disconnect" || mode == "unsupported") {
 				t.Fatal("session status changed without Disconnect-ACK")
 			}
 		})

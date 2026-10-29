@@ -11,6 +11,9 @@ import (
 
 // StartRevocations owns a worker for exactly one tenant store.
 func StartRevocations(parent context.Context, s *store.Store, syncStatus ...func(context.Context) error) func() {
+	return StartRevocationsWithFallback(parent, s, nil, syncStatus...)
+}
+func StartRevocationsWithFallback(parent context.Context, s *store.Store, fallback DisconnectFallback, syncStatus ...func(context.Context) error) func() {
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 	statusDone := make(chan struct{})
@@ -62,7 +65,7 @@ func StartRevocations(parent context.Context, s *store.Store, syncStatus ...func
 		for {
 
 			started := time.Now()
-			err := RevokeSessions(ctx, s)
+			err := RevokeSessions(ctx, s, fallback)
 			s.Metrics.Finish("revocation", started, err)
 			if err != nil && ctx.Err() == nil {
 				slog.Error("access revocation scan failed", "error", err)
@@ -76,7 +79,11 @@ func StartRevocations(parent context.Context, s *store.Store, syncStatus ...func
 	}()
 	return func() { cancel(); <-done; <-statusDone; <-retentionDone }
 }
-func RevokeSessions(ctx context.Context, s *store.Store) error {
+func RevokeSessions(ctx context.Context, s *store.Store, fallbacks ...DisconnectFallback) error {
+	var fallback DisconnectFallback
+	if len(fallbacks) > 0 {
+		fallback = fallbacks[0]
+	}
 	if err := s.MarkStaleSessions(ctx); err != nil {
 		return err
 	}
@@ -118,7 +125,7 @@ func RevokeSessions(ctx context.Context, s *store.Store) error {
 		if token != p.token {
 			continue
 		}
-		result, e := ChangeSession(ctx, s, p.session.NAS, p.session.ID, "disconnect", 0, p.session)
+		result, e := ChangeSessionWithFallback(ctx, s, p.session.NAS, p.session.ID, "disconnect", 0, fallback, p.session)
 		outcome := "retry"
 		if e == nil && result.Acknowledged {
 			outcome = "acknowledged"
