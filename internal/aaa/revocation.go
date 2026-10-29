@@ -127,6 +127,8 @@ func RevokeSessions(ctx context.Context, s *store.Store) error {
 		message := ""
 		if e != nil {
 			message = e.Error()
+		} else if !result.Acknowledged && result.ErrorCause == 406 {
+			message = "NAS reports Unsupported Extension (406); session termination is not confirmed"
 		}
 		if result.Acknowledged {
 			next = 0
