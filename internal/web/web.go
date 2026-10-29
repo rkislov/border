@@ -27,6 +27,7 @@ import (
 	"github.com/rkislov/border/internal/notification"
 	"github.com/rkislov/border/internal/pki"
 	"github.com/rkislov/border/internal/radprofile"
+	"github.com/rkislov/border/internal/routeros"
 	"github.com/rkislov/border/internal/store"
 )
 
@@ -34,6 +35,7 @@ import (
 var assets embed.FS
 
 type app struct {
+	routerOS      *routeros.Service
 	guest         *guest.Service
 	fingerbank    *fingerbank.Client
 	identities    *identitysource.Service
@@ -74,6 +76,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	if a.guest != nil {
 		vault = a.guest.Vault
 	}
+	a.routerOS = &routeros.Service{Store: s, Vault: vault}
 	a.fingerbank = fingerbank.New(s, vault)
 	a.identities = &identitysource.Service{Store: s, Vault: vault}
 	a.platform = platform
@@ -83,6 +86,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	a.healthRoutes(mux)
 	a.tenantRoutes(mux)
 	a.fingerbankRoutes(mux)
+	a.routerOSRoutes(mux)
 	a.accessRoutes(mux)
 	a.notificationRoutes(mux)
 	a.guestRoutes(mux)

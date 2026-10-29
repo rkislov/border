@@ -22,6 +22,7 @@ async function load() {
  try { const r = await scopedFetch('/api/state'); if (!r.ok) throw new Error('Не удалось загрузить данные: ' + r.status); state = await r.json();
   diagnosticRequest++;const diagnosticNAS=$('#diagnostic-nas'),previousNAS=diagnosticNAS.value;diagnosticNAS.replaceChildren(new Option('Выберите NAS',''));for(const n of state.nas)diagnosticNAS.add(new Option(n.Name+' · '+n.Address,n.Address));if([...diagnosticNAS.options].some(o=>o.value===previousNAS))diagnosticNAS.value=previousNAS;$('#diagnostic-result').hidden=true;
   $('#stat-nas').textContent = state.nas.length; $('#stat-vlans').textContent = state.vlans.length; $('#stat-devices').textContent = state.devices.filter(d => d.Active).length; $('#stat-sessions').textContent = state.sessions.filter(s => s.Status === 'active').length;
+  const rosNAS=$('#routeros-nas'),previousROS=rosNAS.value;rosNAS.replaceChildren(new Option('Выберите MikroTik',''));for(const n of state.nas.filter(n=>n.Dictionary==='mikrotik'))rosNAS.add(new Option(n.Name+' · '+n.Address,n.Address));if([...rosNAS.options].some(o=>o.value===previousROS))rosNAS.value=previousROS;
   table('#nas-list', ['IP-адрес', 'Имя', 'Словарь', 'Режим', 'Расположение', 'Одиночная политика', 'CoA порт', 'Обновление, сек.', 'Потеря связи, сек.', 'SMS-портал'], state.nas.map(n => [n.Address, n.Name, n.Dictionary, n.Mode, n.LocationID, n.AccessPolicyID, n.CoAPort,n.InterimSeconds,n.StaleSeconds, n.PortalEnabled ? 'Разрешён' : 'Выключен']), 'nas');
   for(const nas of state.nas){const b=document.createElement('button');b.textContent='Изменить '+nas.Address;b.onclick=()=>fillForm('#nas-form',{...nas,Secret:''});$('#nas-list').append(b);}
   table('#vlans-list', ['VLAN', 'Название'], state.vlans.map(v => [v.ID, v.Name]), 'vlans');
@@ -253,3 +254,7 @@ for(const kind of ['sessions','events']){
  $('#'+kind+'-prev').onclick=()=>{listing[kind].page--;loadListing(kind);};
  $('#'+kind+'-next').onclick=()=>{listing[kind].page++;loadListing(kind);};
 }
+
+let routerOSRequest=0;
+$('#routeros-nas').onchange=async()=>{const f=$('#routeros-form'),nas=f.elements.NAS.value,request=++routerOSRequest;for(const k of ['Address','Username','Password','HostKey'])f.elements[k].value='';f.elements.Enabled.checked=false;$('#routeros-status').textContent='';if(!nas)return;try{const r=await scopedFetch('/api/routeros?nas='+encodeURIComponent(nas));if(!r.ok)throw new Error(await r.text());const c=await r.json();if(request!==routerOSRequest)return;for(const k of ['Address','Username','HostKey'])f.elements[k].value=c[k]||'';f.elements.Enabled.checked=c.Enabled;$('#routeros-status').textContent=c.HasPassword?'Пароль сохранён в зашифрованном виде.':'Пароль ещё не задан.';}catch(e){if(request===routerOSRequest)notice(e.message,true);}};
+$('#routeros-form').onsubmit=async e=>{e.preventDefault();const f=e.target,data=Object.fromEntries(new FormData(f));data.Enabled=f.elements.Enabled.checked;if(await mutate('/api/routeros',data)){f.elements.Password.value='';$('#routeros-status').textContent='Настройки адаптера сохранены.';}};
