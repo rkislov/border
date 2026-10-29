@@ -88,17 +88,31 @@ func TestEncryptedConfig(t *testing.T) {
 // A real SSH handshake verifies pinning, bounded command handling and the
 // requirement to observe absence after removal, without a physical router.
 func TestDisconnectSSH(t *testing.T) {
-	for _, scenario := range []string{"success", "wrong-key", "still-active", "generation-changed", "ambiguous"} {
+	for _, scenario := range []string{"success", "wrong-key", "still-active", "generation-changed", "ambiguous", "ssh-on-vpn-nas"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := service(t)
 			ctx := t.Context()
 			now := time.Now().Unix() - 60
-			v := store.Session{NAS: "192.0.2.1", ID: "id", Username: "user", Generation: "generation", GrantToken: "", StartedAt: now}
+			v := store.Session{NAS: "192.0.2.1", ID: "id", Username: "user", Generation: "generation", GrantToken: "grant", StartedAt: now}
 			if e := s.Store.Exec(ctx, "INSERT INTO nas(address,name,secret,dictionary,access_mode) VALUES(?,?,?,'mikrotik','ssh')", v.NAS, "test", "test-secret-12345"); e != nil {
 				t.Fatal(e)
 			}
-			if e := s.Store.Exec(ctx, "INSERT INTO sessions(nas,session_id,mac,username,status,updated_at,generation,started_at) VALUES(?,?,'',?,'active',?,?,?)", v.NAS, v.ID, v.Username, now, v.Generation, now); e != nil {
+			if e := s.Store.Exec(ctx, "INSERT INTO sessions(nas,session_id,mac,username,status,updated_at,generation,started_at,grant_token) VALUES(?,?,'',?,'active',?,?,?,'grant')", v.NAS, v.ID, v.Username, now, v.Generation, now); e != nil {
 				t.Fatal(e)
+			}
+			for _, q := range []string{
+				"INSERT INTO authentication_policies(id,name,source) VALUES('auth','auth','local')",
+				"INSERT INTO access_policies(id,name,authentication_id,mode,session_seconds) VALUES('ssh','ssh','auth','ssh',600)",
+				"INSERT INTO access_grants(token,nas,username,policy_id,expires_at) VALUES('grant','192.0.2.1','user','ssh',0)",
+			} {
+				if e := s.Store.Exec(ctx, q); e != nil {
+					t.Fatal(e)
+				}
+			}
+			if scenario == "ssh-on-vpn-nas" {
+				if e := s.Store.Exec(ctx, "UPDATE nas SET access_mode='vpn'"); e != nil {
+					t.Fatal(e)
+				}
 			}
 			if scenario == "generation-changed" {
 				v.Generation = "old"
@@ -178,12 +192,55 @@ func TestDisconnectSSH(t *testing.T) {
 				}
 			}()
 			ok, e := s.Disconnect(context.Background(), v)
-			if scenario == "success" {
+			if scenario == "success" || scenario == "ssh-on-vpn-nas" {
 				if !ok || e != nil {
 					t.Fatal(ok, e)
 				}
 			} else if ok || e == nil {
 				t.Fatal("unsafe confirmation", ok, e)
+			}
+		})
+	}
+}
+
+func TestDisconnectRequiresSSHGrant(t *testing.T) {
+	for _, scenario := range []string{"vpn", "missing", "other-user", "other-nas"} {
+		t.Run(scenario, func(t *testing.T) {
+			s := service(t)
+			ctx := t.Context()
+			for _, q := range []string{
+				"INSERT INTO nas(address,name,secret,dictionary,access_mode) VALUES('192.0.2.1','test','secret','mikrotik','ssh')",
+				"INSERT INTO authentication_policies(id,name,source) VALUES('auth','auth','local')",
+				"INSERT INTO access_policies(id,name,authentication_id,mode,session_seconds) VALUES('p','p','auth','vpn',600)",
+				"INSERT INTO access_grants(token,nas,username,policy_id,expires_at) VALUES('grant','192.0.2.1','user','p',0)",
+			} {
+				if e := s.Store.Exec(ctx, q); e != nil {
+					t.Fatal(e)
+				}
+			}
+			cfg := Config{Enabled: true, Address: "127.0.0.1:1", Username: "service", Password: "test-password-12345", HostKey: "SHA256:" + strings.Repeat("A", 43)}
+			if e := s.Save(ctx, "192.0.2.1", cfg); e != nil {
+				t.Fatal(e)
+			}
+			v := store.Session{NAS: "192.0.2.1", Username: "user", GrantToken: "grant"}
+			if scenario != "vpn" {
+				if e := s.Store.Exec(ctx, "UPDATE access_policies SET mode='ssh'"); e != nil {
+					t.Fatal(e)
+				}
+			}
+			switch scenario {
+			case "missing":
+				v.GrantToken = ""
+			case "other-user":
+				v.Username = "someone"
+			case "other-nas":
+				if e := s.Store.Exec(ctx, "UPDATE access_grants SET nas='192.0.2.2'"); e != nil {
+					t.Fatal(e)
+				}
+			}
+			ok, e := s.Disconnect(ctx, v)
+			if ok || e == nil || strings.Contains(e.Error(), "management connection") {
+				t.Fatalf("must refuse before SSH dial: %v %v", ok, e)
 			}
 		})
 	}

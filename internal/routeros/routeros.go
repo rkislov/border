@@ -181,11 +181,11 @@ func (s *Service) Disconnect(ctx context.Context, v store.Session) (bool, error)
 		return false, e
 	}
 	var dictionary, mode string
-	if e = s.Store.Row(ctx, "SELECT dictionary,access_mode FROM nas WHERE address=?", v.NAS).Scan(&dictionary, &mode); e != nil {
+	if e = s.Store.Row(ctx, "SELECT n.dictionary,p.mode FROM nas n JOIN access_grants g ON g.nas=n.address JOIN access_policies p ON p.id=g.policy_id WHERE n.address=? AND g.token=? AND g.username=?", v.NAS, v.GrantToken, v.Username).Scan(&dictionary, &mode); e != nil {
 		return false, e
 	}
 	if dictionary != "mikrotik" || mode != "ssh" {
-		return false, fmt.Errorf("RouterOS adapter requires an SSH MikroTik NAS")
+		return false, fmt.Errorf("RouterOS adapter requires a tracked SSH grant on a MikroTik NAS")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
