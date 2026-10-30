@@ -13,12 +13,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/rkislov/border/internal/identity"
+	"github.com/rkislov/border/internal/store"
 	"net"
 	"strings"
 	"time"
 )
 
 type Redirect struct {
+	Domain    string `json:"d,omitempty"`
 	Version   int    `json:"v"`
 	NAS       string `json:"n"`
 	MAC       string `json:"m"`
@@ -99,4 +101,18 @@ func (s *Service) redirect(ctx context.Context, token string) (Redirect, error) 
 		return Redirect{}, bad
 	}
 	return r, nil
+}
+
+// Design resolves only verified redirect context in the current tenant store.
+func (s *Service) Design(ctx context.Context, token string) (store.PortalDesign, error) {
+	r, err := s.redirect(ctx, token)
+	if err != nil {
+		return store.PortalDesign{}, err
+	}
+	if r.Domain != "" {
+		if err = s.Store.ValidatePortalScope(ctx, "domain:"+r.Domain); err != nil {
+			return store.PortalDesign{}, err
+		}
+	}
+	return s.Store.EffectivePortalDesign(ctx, r.NAS, r.Domain)
 }

@@ -84,7 +84,7 @@ func (a *app) guestRoutes(mux *http.ServeMux) {
 		if !ready(w) {
 			return
 		}
-		var v struct{ NAS, MAC, SessionID string }
+		var v struct{ NAS, MAC, SessionID, Domain string }
 		if !decode(w, r, &v) {
 			return
 		}
@@ -93,7 +93,13 @@ func (a *app) guestRoutes(mux *http.ServeMux) {
 			http.Error(w, "NAS must allow guest portal", 400)
 			return
 		}
-		token, err := guest.SignRedirect(guest.Redirect{NAS: v.NAS, MAC: v.MAC, SessionID: v.SessionID}, secret)
+		if v.Domain != "" {
+			if a.s.ValidatePortalScope(r.Context(), "domain:"+v.Domain) != nil {
+				http.Error(w, "unknown domain", 400)
+				return
+			}
+		}
+		token, err := guest.SignRedirect(guest.Redirect{NAS: v.NAS, MAC: v.MAC, SessionID: v.SessionID, Domain: v.Domain}, secret)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return

@@ -90,6 +90,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	a.accessRoutes(mux)
 	a.notificationRoutes(mux)
 	a.guestRoutes(mux)
+	a.portalDesignRoutes(mux)
 	a.profileRoutes(mux)
 	a.fingerprintRoutes(mux)
 	sub, err := fs.Sub(assets, "assets")
@@ -120,7 +121,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if r.TLS == nil || (requireMTLS && len(r.TLS.VerifiedChains) == 0) {
 			http.Error(w, "client certificate required", http.StatusForbidden)
 			return
@@ -155,6 +156,9 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 		}
 
 		limit := int64(16384)
+		if r.URL.Path == "/api/portal-design/background" {
+			limit = 2 << 20
+		}
 		if r.URL.Path == "/api/access-rules" {
 			limit = 131072
 		}

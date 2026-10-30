@@ -8,6 +8,22 @@ import (
 )
 
 func (p *Portal) guestRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/guest/design", func(w http.ResponseWriter, r *http.Request) {
+		if p.Guest == nil {
+			http.Error(w, "portal unavailable", 503)
+			return
+		}
+		var v struct{ Token string }
+		if !decode(w, r, &v) {
+			return
+		}
+		d, err := p.Guest.Design(r.Context(), v.Token)
+		if err != nil {
+			http.Error(w, "invalid NAS redirect", 400)
+			return
+		}
+		jsonReply(w, d)
+	})
 	mux.HandleFunc("GET /guest", func(w http.ResponseWriter, r *http.Request) {
 		b, err := assets.ReadFile("assets/guest.html")
 		if err != nil {
