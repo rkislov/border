@@ -211,7 +211,10 @@ func (s *Store) saveRulesTx(ctx context.Context, tx *sql.Tx, c RuleSet) error {
 	if current != c.Version {
 		return fmt.Errorf("rules changed; reload before saving")
 	}
-	c.Version++
+	c.Version, e = s.nextConfigurationVersion(ctx, tx, "rules", c.PolicyID, current)
+	if e != nil {
+		return e
+	}
 	raw, e := json.Marshal(c)
 	if e != nil {
 		return e

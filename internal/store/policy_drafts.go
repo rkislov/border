@@ -12,11 +12,11 @@ import (
 )
 
 type PolicyDraft struct {
-	Kind, PolicyID string
-	Revision       int64
-	Base, Payload  json.RawMessage
-	Actor          string
-	UpdatedAt      int64
+	Kind, PolicyID, Operation string
+	Revision                  int64
+	Base, Payload             json.RawMessage
+	Actor                     string
+	UpdatedAt                 int64
 }
 type PolicyRelease struct {
 	ID, Kind, PolicyID, Actor, BatchID string
@@ -89,7 +89,7 @@ func (s *Store) policySnapshot(ctx context.Context, tx *sql.Tx, kind, id string)
 		var version int64
 		e := tx.QueryRowContext(ctx, s.SQL("SELECT config,version FROM access_rule_sets WHERE policy_id=?"), id).Scan(&raw, &version)
 		if e == sql.ErrNoRows {
-			return policyJSON(RuleSet{PolicyID: id, Rules: []AccessRule{}}), nil
+			return json.RawMessage("null"), nil
 		}
 		if e != nil {
 			return nil, e
@@ -105,6 +105,9 @@ func (s *Store) policySnapshot(ctx context.Context, tx *sql.Tx, kind, id string)
 	}
 }
 func (s *Store) applyPolicy(ctx context.Context, tx *sql.Tx, kind, id string, raw json.RawMessage) error {
+	if isDeletion(raw) {
+		return s.deleteDraftObject(ctx, tx, kind, id)
+	}
 	switch kind {
 	case "authentication":
 		var v AuthenticationPolicy
@@ -145,6 +148,8 @@ func draftTx(ctx context.Context, s *Store, tx *sql.Tx, kind, id string) (Policy
 	e := tx.QueryRowContext(ctx, s.SQL("SELECT revision,base,payload,actor,updated_at FROM policy_drafts WHERE kind=? AND policy_id=?"), kind, id).Scan(&d.Revision, &base, &raw, &d.Actor, &d.UpdatedAt)
 	d.Base = json.RawMessage(base)
 	d.Payload = json.RawMessage(raw)
+	d.Base = normalizeSnapshot(kind, d.Base)
+	d.Operation = draftOperation(d.Payload)
 	return d, e
 }
 func (s *Store) SavePolicyDraft(ctx context.Context, d PolicyDraft, actor string) error {
@@ -159,6 +164,18 @@ func (s *Store) SavePolicyDraft(ctx context.Context, d PolicyDraft, actor string
 	return tx.Commit()
 }
 func (s *Store) savePolicyDraftTx(ctx context.Context, tx *sql.Tx, d PolicyDraft, actor string) error {
+	if d.Operation != "" && d.Operation != "upsert" && d.Operation != "delete" {
+		return fmt.Errorf("invalid draft operation")
+	}
+	if d.Operation == "delete" {
+		d.Payload = json.RawMessage("null")
+	}
+	if d.Operation == "upsert" && isDeletion(d.Payload) {
+		return fmt.Errorf("upsert requires payload")
+	}
+	if e := validateDraftKey(d.Kind, d.PolicyID); e != nil {
+		return e
+	}
 	if len(d.Payload) > 256*1024 {
 		return fmt.Errorf("invalid policy draft")
 	}
@@ -176,7 +193,10 @@ func (s *Store) savePolicyDraftTx(ctx context.Context, tx *sql.Tx, d PolicyDraft
 	if current.Revision > 0 {
 		base = current.Base
 	}
-	canonical, e := draftPayload(d.Kind, d.PolicyID, d.Payload)
+	canonical := json.RawMessage("null")
+	if !isDeletion(d.Payload) {
+		canonical, e = draftPayload(d.Kind, d.PolicyID, d.Payload)
+	}
 	if e != nil {
 		return e
 	}
@@ -206,8 +226,9 @@ func (s *Store) PolicyDrafts(ctx context.Context) ([]PolicyDraft, error) {
 		if e = rows.Scan(&d.Kind, &d.PolicyID, &d.Revision, &b, &p, &d.Actor, &d.UpdatedAt); e != nil {
 			return nil, e
 		}
-		d.Base = json.RawMessage(b)
+		d.Base = normalizeSnapshot(d.Kind, json.RawMessage(b))
 		d.Payload = json.RawMessage(p)
+		d.Operation = draftOperation(d.Payload)
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -275,9 +296,6 @@ func (s *Store) RollbackPolicyDraft(ctx context.Context, release, actor string) 
 	var kind, id, raw string
 	if e = tx.QueryRowContext(ctx, s.SQL("SELECT kind,policy_id,before_payload FROM policy_releases WHERE id=?"), release).Scan(&kind, &id, &raw); e != nil {
 		return e
-	}
-	if raw == "null" {
-		return fmt.Errorf("first publication has no previous version; disable the policy through a draft")
 	}
 	restored, e := s.rollbackPayload(ctx, tx, kind, id, json.RawMessage(raw))
 	if e != nil {

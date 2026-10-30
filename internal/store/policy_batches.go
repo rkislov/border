@@ -219,8 +219,15 @@ func (s *Store) batchDrafts(ctx context.Context, tx *sql.Tx, refs []DraftRef) ([
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		di, dj := isDeletion(out[i].Payload), isDeletion(out[j].Payload)
+		if di != dj {
+			return !di
+		}
 		a, b := draftOrder[out[i].Kind], draftOrder[out[j].Kind]
 		if a != b {
+			if di {
+				return a > b
+			}
 			return a < b
 		}
 		return out[i].PolicyID < out[j].PolicyID
@@ -463,9 +470,6 @@ func (s *Store) RollbackPolicyBatch(ctx context.Context, batch, actor string) er
 		return fmt.Errorf("batch not found or too large")
 	}
 	for _, d := range ds {
-		if string(d.Payload) == "null" {
-			return fmt.Errorf("first publication: %s/%s has no previous version", d.Kind, d.PolicyID)
-		}
 		d.Payload, e = s.rollbackPayload(ctx, tx, d.Kind, d.PolicyID, d.Payload)
 		if e != nil {
 			return e
@@ -477,6 +481,10 @@ func (s *Store) RollbackPolicyBatch(ctx context.Context, batch, actor string) er
 	return tx.Commit()
 }
 func (s *Store) rollbackPayload(ctx context.Context, tx *sql.Tx, kind, id string, raw json.RawMessage) (json.RawMessage, error) {
+	raw = normalizeSnapshot(kind, raw)
+	if isDeletion(raw) {
+		return raw, nil
+	}
 	if kind != "rules" && kind != "nas-policies" {
 		return raw, nil
 	}

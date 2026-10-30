@@ -111,8 +111,8 @@ func (a *app) finishPolicy(w http.ResponseWriter, r *http.Request, err error, ac
 			message = "Версия изменилась. Обновите список; при конфликте рабочей версии удалите черновик и создайте заново."
 		case strings.Contains(err.Error(), "dependent policy"):
 			message = "Изменение несовместимо с зависимой политикой доступа. Сначала измените её авторизацию, назначение или правила."
-		case strings.Contains(err.Error(), "first publication"):
-			message = "У первой публикации нет предыдущей версии. Создайте черновик с выключенной политикой."
+		case strings.Contains(err.Error(), "cannot delete"):
+			message = "Удаление заблокировано зависимостями. Оцените пакет и добавьте изменения связанных объектов."
 		}
 		http.Error(w, message, http.StatusConflict)
 		return

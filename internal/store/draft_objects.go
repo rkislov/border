@@ -162,7 +162,7 @@ func (s *Store) objectSnapshot(ctx context.Context, tx *sql.Tx, kind, id string)
 		var version int64
 		e = tx.QueryRowContext(ctx, s.SQL("SELECT config,version FROM nas_policy_sets WHERE nas=?"), id).Scan(&raw, &version)
 		if e == sql.ErrNoRows {
-			return policyJSON(v), nil
+			return json.RawMessage("null"), nil
 		}
 		if e == nil {
 			e = json.Unmarshal([]byte(raw), &v)
@@ -172,6 +172,9 @@ func (s *Store) objectSnapshot(ctx context.Context, tx *sql.Tx, kind, id string)
 	case "nas-assignment":
 		v := NASAssignment{NAS: id}
 		e = tx.QueryRowContext(ctx, s.SQL("SELECT COALESCE(access_policy_id,'') FROM nas WHERE address=?"), id).Scan(&v.AccessPolicyID)
+		if e == nil && v.AccessPolicyID == "" {
+			return json.RawMessage("null"), nil
+		}
 		out = v
 	default:
 		return nil, fmt.Errorf("unknown draft kind")
