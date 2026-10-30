@@ -166,7 +166,7 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 		return fail(err)
 	}
 	r.guest = guests
-	notifications := &notification.Service{Store: s, Vault: codes.Vault}
+	notifications := &notification.Service{Store: s, Vault: codes.Vault, Tenant: id}
 	codes.Mail = notifications
 	guests.SenderForNAS = notifications.GuestSender
 	guests.SendEmail = notifications.GuestEmail
@@ -202,7 +202,8 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 	// Manager.Close owns the cleanup lifecycle, independent of create request cancellation.
 	stopGuests := guests.StartCleanup(context.Background())
 	stopRevocations := aaa.StartRevocationsWithFallback(context.Background(), s, (&routeros.Service{Store: s, Vault: codes.Vault}).Disconnect, identities.SyncAccountStatus)
-	r.stop = func() { stopRevocations(); stopGuests() }
+	stopNotifications := notifications.StartPolicyDeliveries(context.Background())
+	r.stop = func() { stopNotifications(); stopRevocations(); stopGuests() }
 	return r, nil
 }
 func (r *Runtime) close() {

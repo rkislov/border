@@ -105,7 +105,8 @@ func TestSMTPImplicitTLS(t *testing.T) {
 				}
 				io.WriteString(conn, "250 queued\r\n")
 			case line == "QUIT\r\n":
-				io.WriteString(conn, "221 bye\r\n")
+				// Simulate connection loss after DATA was acknowledged.
+				// This must not turn a delivered message into a retry.
 				message <- body.String()
 				return
 			default:
@@ -116,10 +117,10 @@ func TestSMTPImplicitTLS(t *testing.T) {
 	s := &SMTP{Address: l.Addr().String(), From: "border@example.test", ImplicitTLS: true, TLS: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if err = s.Send(ctx, "user@example.test", "Network code", "12345678"); err != nil {
+	if err = s.SendWithID(ctx, "user@example.test", "Network code", "12345678", "stable-delivery-id"); err != nil {
 		t.Fatal(err)
 	}
-	if msg := <-message; !strings.Contains(msg, "12345678") || !strings.Contains(msg, "To: <user@example.test>") {
+	if msg := <-message; !strings.Contains(msg, "Message-ID: <stable-delivery-id@border.invalid>") || !strings.Contains(msg, "12345678") || !strings.Contains(msg, "To: <user@example.test>") {
 		t.Fatal("wrong message", msg)
 	}
 	if err = s.Send(ctx, "user@example.test\r\nBcc: attacker@example.test", "Code", "secret"); err == nil {

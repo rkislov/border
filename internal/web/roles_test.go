@@ -55,7 +55,7 @@ func TestRolesScopeAndLiveSessionInvalidation(t *testing.T) {
 	for _, tc := range []struct {
 		user, path string
 		code       int
-	}{{"op", "/api/sessions?LocationID=west", 200}, {"op", "/api/events", 403}, {"op", "/api/state", 403}, {"op", "/api/notifications?scope=default", 403}, {"op", "/api/admins", 403}, {"op", "/api/metrics", 403}, {"op", "/metrics", 403}, {"op", "/api/tenants", 403}, {"view", "/api/sessions", 200}, {"view", "/api/events", 200}, {"view", "/api/portal-design?scope=tenant", 403}, {"view", "/api/access-model", 403}, {"view", "/api/admins", 403}, {"view", "/api/policy-drafts", 403}, {"view", "/api/policy-drafts/reviews/missing", 403}, {"op", "/api/policy-drafts/impact?kind=access&id=vpn", 403}} {
+	}{{"op", "/api/sessions?LocationID=west", 200}, {"op", "/api/events", 403}, {"view", "/api/policy-notifications", 403}, {"op", "/api/policy-notifications/push-key", 403}, {"op", "/api/state", 403}, {"op", "/api/notifications?scope=default", 403}, {"op", "/api/admins", 403}, {"op", "/api/metrics", 403}, {"op", "/metrics", 403}, {"op", "/api/tenants", 403}, {"view", "/api/sessions", 200}, {"view", "/api/events", 200}, {"view", "/api/portal-design?scope=tenant", 403}, {"view", "/api/access-model", 403}, {"view", "/api/admins", 403}, {"view", "/api/policy-drafts", 403}, {"view", "/api/policy-drafts/reviews/missing", 403}, {"op", "/api/policy-drafts/impact?kind=access&id=vpn", 403}} {
 		w := send("GET", tc.path, tc.user, nil, nil, "")
 		if w.Code != tc.code {
 			t.Fatalf("%s %s: %d", tc.user, tc.path, w.Code)
@@ -70,7 +70,7 @@ func TestRolesScopeAndLiveSessionInvalidation(t *testing.T) {
 			t.Fatal("wrong shell")
 		}
 		csrf := strings.Split(strings.Split(w.Body.String(), `name="csrf-token" content="`)[1], `"`)[0]
-		for _, path := range []string{"/api/policy-drafts/schedules", "/api/policy-drafts/schedules/cancel", "/api/policy-drafts/review-settings", "/api/policy-drafts/reviews", "/api/policy-drafts/reviews/decision", "/api/policy-drafts/batch/impact", "/api/policy-drafts/batch/publish", "/api/policy-drafts/batch/rollback", "/api/nas-assignment", "/api/policy-drafts", "/api/policy-drafts/publish", "/api/policy-drafts/rollback", "/api/policy-drafts/discard", "/api/settings", "/api/admins", "/api/delete", "/api/portal-design", "/api/tenants"} {
+		for _, path := range []string{"/api/policy-notifications/recipient", "/api/policy-notifications/retry", "/api/policy-notifications/push", "/api/policy-notifications/push-disable", "/api/policy-drafts/schedules", "/api/policy-drafts/schedules/cancel", "/api/policy-drafts/review-settings", "/api/policy-drafts/reviews", "/api/policy-drafts/reviews/decision", "/api/policy-drafts/batch/impact", "/api/policy-drafts/batch/publish", "/api/policy-drafts/batch/rollback", "/api/nas-assignment", "/api/policy-drafts", "/api/policy-drafts/publish", "/api/policy-drafts/rollback", "/api/policy-drafts/discard", "/api/settings", "/api/admins", "/api/delete", "/api/portal-design", "/api/tenants"} {
 			if w = send("POST", path, user, []byte(`{}`), nil, csrf); w.Code != 403 {
 				t.Fatal("write allowed", user, path, w.Code)
 			}

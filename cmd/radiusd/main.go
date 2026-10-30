@@ -367,6 +367,12 @@ func command() *cobra.Command {
 		}
 		stopRevocations := aaa.StartRevocationsWithFallback(ctx, s, management.Disconnect, identities.SyncAccountStatus)
 		defer stopRevocations()
+		notifier := &notification.Service{Store: s}
+		if codes != nil {
+			notifier.Vault = codes.Vault
+		}
+		stopNotifications := notifier.StartPolicyDeliveries(ctx)
+		defer stopNotifications()
 		if guests != nil {
 			stopCleanup := guests.StartCleanup(ctx)
 			defer stopCleanup()

@@ -60,6 +60,16 @@ func FromEnv() (*SMTP, error) {
 // Send never falls back to unencrypted delivery. Use port 465/implicit or
 // STARTTLS (usually port 587); credentials are sent only after TLS verification.
 func (s *SMTP) Send(ctx context.Context, to, subject, body string) error {
+	return s.SendWithID(ctx, to, subject, body, "")
+}
+
+// SendWithID provides a stable Message-ID for retries; SMTP itself does not
+// guarantee idempotent acceptance by the recipient server.
+func (s *SMTP) SendWithID(ctx context.Context, to, subject, body, id string) error {
+	if strings.ContainsAny(id, "\r\n<>") {
+		return fmt.Errorf("invalid message id")
+	}
+
 	recipient, err := mail.ParseAddress(to)
 	if err != nil || strings.ContainsAny(to+subject, "\r\n") {
 		return fmt.Errorf("invalid mail header")
@@ -125,7 +135,11 @@ func (s *SMTP) Send(ctx context.Context, to, subject, body string) error {
 	if err != nil {
 		return err
 	}
-	message := "From: " + from.String() + "\r\nTo: " + recipient.String() + "\r\nSubject: " + subject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + strings.ReplaceAll(body, "\n", "\r\n") + "\r\n"
+	messageID := ""
+	if id != "" {
+		messageID = "Message-ID: <" + id + "@border.invalid>\r\n"
+	}
+	message := messageID + "From: " + from.String() + "\r\nTo: " + recipient.String() + "\r\nSubject: " + subject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + strings.ReplaceAll(body, "\n", "\r\n") + "\r\n"
 	if _, err = w.Write([]byte(message)); err != nil {
 		w.Close()
 		return err
@@ -133,5 +147,7 @@ func (s *SMTP) Send(ctx context.Context, to, subject, body string) error {
 	if err = w.Close(); err != nil {
 		return fmt.Errorf("SMTP delivery failed")
 	}
-	return c.Quit()
+	// DATA acknowledgement confirms acceptance; a later QUIT failure must not resend.
+	_ = c.Quit()
+	return nil
 }

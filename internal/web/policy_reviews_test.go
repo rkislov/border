@@ -36,10 +36,20 @@ func TestReviewAPISelfApprovalCSRFAndPublicationGuard(t *testing.T) {
 	}
 	page := send("GET", "/", "alice", "", "")
 	csrf := strings.Split(strings.Split(page.Body.String(), `name="csrf-token" content="`)[1], `"`)[0]
-	for _, path := range []string{"/api/policy-drafts/schedules", "/api/policy-drafts/schedules/cancel", "/api/policy-drafts/review-settings", "/api/policy-drafts/reviews", "/api/policy-drafts/reviews/decision"} {
+	for _, path := range []string{"/api/policy-notifications/recipient", "/api/policy-notifications/retry", "/api/policy-notifications/push", "/api/policy-notifications/push-disable", "/api/policy-drafts/schedules", "/api/policy-drafts/schedules/cancel", "/api/policy-drafts/review-settings", "/api/policy-drafts/reviews", "/api/policy-drafts/reviews/decision"} {
 		if w := send("POST", path, "alice", `{}`, ""); w.Code != 403 {
 			t.Fatal("review CSRF", path, w.Code)
 		}
+	}
+
+	if w := send("POST", "/api/policy-notifications/recipient", "alice", `{"Channel":"email","Scope":"default","Destination":"alice@example.test","Enabled":true,"Username":"bob"}`, csrf); w.Code != 400 {
+		t.Fatal("recipient spoof", w.Code)
+	}
+	if w := send("POST", "/api/policy-notifications/recipient", "alice", `{"Channel":"email","Scope":"default","Destination":"alice@example.test","Enabled":true}`, csrf); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if targets, e := s.PolicyNotificationTargets(ctx, "bob"); e != nil || len(targets) != 0 {
+		t.Fatal("cross-account settings", targets, e)
 	}
 	if w := send("POST", "/api/policy-drafts/review-settings", "alice", `{"Required":true,"Revision":0}`, csrf); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())

@@ -48,9 +48,10 @@ type storedConfig struct {
 	PushPrivate string
 }
 type Service struct {
-	Store *store.Store
-	Vault *auth.Vault
-	mu    sync.Mutex
+	Tenant string
+	Store  *store.Store
+	Vault  *auth.Vault
+	mu     sync.Mutex
 }
 
 func scope(user string) string {
