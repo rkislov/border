@@ -7,3 +7,10 @@ async function post(path,data){const r=await scopedFetch('/api/guest/'+path,{met
 if(!token){notice('Откройте портал через гостевую сеть: нужен подписанный переход с NAS.',true);$('#phone-form').hidden=true;}
 $('#phone-form').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;try{const r=await post('start',{Token:token,Phone:e.target.elements.Phone.value});challenge=r.ID;$('#code-form').hidden=false;notice('Запрос отправки SMS принят для '+r.MaskedPhone);$('#expiry').textContent='Код действует до '+new Date(r.Expires*1000).toLocaleTimeString('ru-RU')+'. Повторная отправка — через 60 секунд.';setTimeout(()=>{b.disabled=false;},60000);}catch(err){notice(err.message,true);b.disabled=false;}};
 $('#code-form').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;try{const r=await post('verify',{ID:challenge,Code:e.target.elements.Code.value});$('#phone-form').hidden=true;$('#code-form').hidden=true;notice(r.ReconnectRequired?'Доступ разрешён. Переподключитесь к Wi-Fi для применения новой политики.':'Доступ разрешён; NAS подтвердил применение политики.');$('#expiry').textContent='Доступ действует до '+new Date(r.Expires*1000).toLocaleString('ru-RU');}catch(err){notice(err.message,true);b.disabled=false;}};
+
+if(token)post('design',{Token:token}).then(d=>{
+ const stage=$('#portal-stage');stage.dataset.position=d.Position;stage.dataset.align=d.ButtonAlign;stage.dataset.buttons=d.ButtonPosition;
+ if(d.Background)stage.style.backgroundImage='url("'+d.Background+'")';
+ $('#portal-title').textContent=d.Title;$('#portal-description').textContent=d.Description;
+ $('#phone-form button').textContent=d.RequestLabel;$('#code-form button').textContent=d.ConfirmLabel;
+}).catch(e=>{notice(e.message,true);$('#phone-form').hidden=true;});
