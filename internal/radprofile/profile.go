@@ -59,11 +59,8 @@ func (c Config) Validate() error {
 	if c.Mode == "network" && c.Credential != "codes" {
 		return fmt.Errorf("network mode currently uses codes and EAP-TLS")
 	}
-	if c.Dictionary == "keenetic" && c.Mode != "network" {
-		return fmt.Errorf("Keenetic profile currently supports network access only")
-	}
-	if c.Dictionary == "strongswan" && c.Mode == "ssh" {
-		return fmt.Errorf("strongSwan does not support SSH authorization")
+	if !SupportsMode(c.Dictionary, c.Mode) {
+		return fmt.Errorf("mode is not supported by this NAS profile")
 	}
 	return nil
 }
