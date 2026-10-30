@@ -12,7 +12,7 @@ import (
 
 type PolicySchedule struct {
 	ID, ReviewID, Actor, State, Reason, BatchID string
-	DueAt, CreatedAt, UpdatedAt                 int64
+	DueAt, CreatedAt, UpdatedAt, ExpiresAt      int64
 }
 
 func (s *Store) scheduledReview(ctx context.Context, tx *sql.Tx, id, actor string) ([]DraftRef, error) {
@@ -75,8 +75,15 @@ func (s *Store) SchedulePolicyReview(ctx context.Context, reviewID string, due i
 	if n > 0 {
 		return "", fmt.Errorf("schedule: cancel the existing schedule first")
 	}
+	settings, e := s.publicationWindowsTx(ctx, tx)
+	if e != nil {
+		return "", e
+	}
+	if e = settings.Validate(); e != nil {
+		return "", e
+	}
 	id := uuid.NewString()
-	_, e = tx.ExecContext(ctx, s.SQL("INSERT INTO policy_schedules(id,review_id,actor,actor_revision,due_at,state,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?)"), id, reviewID, actor, revision, due, now, now)
+	_, e = tx.ExecContext(ctx, s.SQL("INSERT INTO policy_schedules(id,review_id,actor,actor_revision,due_at,state,created_at,updated_at,expires_at) VALUES(?,?,?,?,?,'pending',?,?,?)"), id, reviewID, actor, revision, due, now, now, due+settings.MaxDelaySeconds)
 	if e != nil {
 		return "", e
 	}
@@ -111,7 +118,7 @@ func (s *Store) CancelPolicySchedule(ctx context.Context, id, actor string) erro
 	return tx.Commit()
 }
 func (s *Store) PolicySchedules(ctx context.Context) ([]PolicySchedule, error) {
-	rows, e := s.DB.QueryContext(ctx, "SELECT id,review_id,actor,state,reason,batch_id,due_at,created_at,updated_at FROM policy_schedules WHERE state='pending' OR id IN (SELECT id FROM policy_schedules ORDER BY updated_at DESC,id DESC LIMIT 100) ORDER BY due_at,id")
+	rows, e := s.DB.QueryContext(ctx, "SELECT id,review_id,actor,state,reason,batch_id,due_at,created_at,updated_at,expires_at FROM policy_schedules WHERE state='pending' OR id IN (SELECT id FROM policy_schedules ORDER BY updated_at DESC,id DESC LIMIT 100) ORDER BY due_at,id")
 	if e != nil {
 		return nil, e
 	}
@@ -119,7 +126,7 @@ func (s *Store) PolicySchedules(ctx context.Context) ([]PolicySchedule, error) {
 	out := []PolicySchedule{}
 	for rows.Next() {
 		var v PolicySchedule
-		if e = rows.Scan(&v.ID, &v.ReviewID, &v.Actor, &v.State, &v.Reason, &v.BatchID, &v.DueAt, &v.CreatedAt, &v.UpdatedAt); e != nil {
+		if e = rows.Scan(&v.ID, &v.ReviewID, &v.Actor, &v.State, &v.Reason, &v.BatchID, &v.DueAt, &v.CreatedAt, &v.UpdatedAt, &v.ExpiresAt); e != nil {
 			return nil, e
 		}
 		out = append(out, v)
@@ -130,6 +137,7 @@ func (s *Store) PolicySchedules(ctx context.Context) ([]PolicySchedule, error) {
 // RunPolicySchedules is restart safe: configuration and the terminal job state
 // commit together under the same cross-process policy lock as manual publication.
 func (s *Store) RunPolicySchedules(ctx context.Context, now time.Time) error {
+	started := time.Now()
 	rows, e := s.DB.QueryContext(ctx, s.SQL("SELECT id FROM policy_schedules WHERE state='pending' AND due_at<=? ORDER BY due_at,id LIMIT 100"), now.Unix())
 	if e != nil {
 		return e
@@ -149,26 +157,59 @@ func (s *Store) RunPolicySchedules(ctx context.Context, now time.Time) error {
 		return e
 	}
 	for _, id := range ids {
-		if e = s.runPolicySchedule(ctx, id, now.Unix()); e != nil {
+		if e = s.runPolicySchedule(ctx, id, now.Add(time.Since(started)).Unix()); e != nil {
 			return e
 		}
 	}
 	return nil
 }
 func (s *Store) runPolicySchedule(ctx context.Context, id string, now int64) error {
+	started := time.Now()
+	clock := func() int64 { return now + int64(time.Since(started)/time.Second) }
 	tx, e := s.policyTx(ctx)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback()
 	var review, actor string
-	var revision int64
-	e = tx.QueryRowContext(ctx, s.SQL("SELECT review_id,actor,actor_revision FROM policy_schedules WHERE id=? AND state='pending' AND due_at<=?"), id, now).Scan(&review, &actor, &revision)
+	var revision, due, expires int64
+	e = tx.QueryRowContext(ctx, s.SQL("SELECT review_id,actor,actor_revision,due_at,expires_at FROM policy_schedules WHERE id=? AND state='pending' AND due_at<=?"), id, now).Scan(&review, &actor, &revision, &due, &expires)
 	if e == sql.ErrNoRows {
 		return nil
 	}
 	if e != nil {
 		return e
+	}
+
+	settings, e := s.publicationWindowsTx(ctx, tx)
+	if e != nil {
+		return e
+	}
+	deadline := expires
+	if current := due + settings.MaxDelaySeconds; current < deadline {
+		deadline = current
+	}
+	expire := func() error {
+		if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_schedules SET state='expired',reason='maximum publication delay exceeded',updated_at=? WHERE id=?"), clock(), id); e != nil {
+			return e
+		}
+		if e = s.reviewAudit(ctx, tx, actor, "scheduled policy publication "+id+": expired maximum publication delay exceeded"); e != nil {
+			return e
+		}
+		return tx.Commit()
+	}
+	if clock() >= deadline {
+		return expire()
+	}
+	allowed, e := settings.Allows(time.Unix(clock(), 0))
+	if e != nil {
+		return e
+	}
+	if !allowed {
+		if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_schedules SET reason='waiting for maintenance window',updated_at=? WHERE id=? AND reason<>'waiting for maintenance window'"), clock(), id); e != nil {
+			return e
+		}
+		return tx.Commit()
 	}
 	if _, e = tx.ExecContext(ctx, "SAVEPOINT scheduled_publication"); e != nil {
 		return e
@@ -197,6 +238,25 @@ func (s *Store) runPolicySchedule(ctx context.Context, id string, now int64) err
 	} else {
 		if e = tx.QueryRowContext(ctx, s.SQL("SELECT batch_id FROM policy_reviews WHERE id=?"), review).Scan(&batch); e != nil {
 			return e
+		}
+	}
+
+	// Do not commit if validation or lock contention crossed the deadline/window.
+	if state == "published" {
+		if clock() >= deadline {
+			if _, e = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT scheduled_publication"); e != nil {
+				return e
+			}
+			return expire()
+		}
+		if e = s.checkPublicationWindow(ctx, tx, time.Unix(clock(), 0)); e != nil {
+			if _, e = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT scheduled_publication"); e != nil {
+				return e
+			}
+			if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_schedules SET reason='waiting for maintenance window',updated_at=? WHERE id=?"), clock(), id); e != nil {
+				return e
+			}
+			return tx.Commit()
 		}
 	}
 	if _, e = tx.ExecContext(ctx, "RELEASE SAVEPOINT scheduled_publication"); e != nil {

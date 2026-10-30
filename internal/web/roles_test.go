@@ -70,7 +70,7 @@ func TestRolesScopeAndLiveSessionInvalidation(t *testing.T) {
 			t.Fatal("wrong shell")
 		}
 		csrf := strings.Split(strings.Split(w.Body.String(), `name="csrf-token" content="`)[1], `"`)[0]
-		for _, path := range []string{"/api/policy-notifications/recipient", "/api/policy-notifications/retry", "/api/policy-notifications/push", "/api/policy-notifications/push-disable", "/api/policy-drafts/schedules", "/api/policy-drafts/schedules/cancel", "/api/policy-drafts/review-settings", "/api/policy-drafts/reviews", "/api/policy-drafts/reviews/decision", "/api/policy-drafts/batch/impact", "/api/policy-drafts/batch/publish", "/api/policy-drafts/batch/rollback", "/api/nas-assignment", "/api/policy-drafts", "/api/policy-drafts/publish", "/api/policy-drafts/rollback", "/api/policy-drafts/discard", "/api/settings", "/api/admins", "/api/delete", "/api/portal-design", "/api/tenants"} {
+		for _, path := range []string{"/api/policy-drafts/maintenance", "/api/policy-notifications/recipient", "/api/policy-notifications/retry", "/api/policy-notifications/push", "/api/policy-notifications/push-disable", "/api/policy-drafts/schedules", "/api/policy-drafts/schedules/cancel", "/api/policy-drafts/review-settings", "/api/policy-drafts/reviews", "/api/policy-drafts/reviews/decision", "/api/policy-drafts/batch/impact", "/api/policy-drafts/batch/publish", "/api/policy-drafts/batch/rollback", "/api/nas-assignment", "/api/policy-drafts", "/api/policy-drafts/publish", "/api/policy-drafts/rollback", "/api/policy-drafts/discard", "/api/settings", "/api/admins", "/api/delete", "/api/portal-design", "/api/tenants"} {
 			if w = send("POST", path, user, []byte(`{}`), nil, csrf); w.Code != 403 {
 				t.Fatal("write allowed", user, path, w.Code)
 			}

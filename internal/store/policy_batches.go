@@ -391,7 +391,13 @@ func (s *Store) PublishPolicyBatch(ctx context.Context, refs []DraftRef, actor s
 		return e
 	}
 	defer tx.Rollback()
+	if e = s.checkPublicationWindow(ctx, tx, time.Now()); e != nil {
+		return e
+	}
 	if e = s.publishPolicyBatchTx(ctx, tx, refs, actor); e != nil {
+		return e
+	}
+	if e = s.checkPublicationWindow(ctx, tx, time.Now()); e != nil {
 		return e
 	}
 	return tx.Commit()
