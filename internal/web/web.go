@@ -84,6 +84,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	a.notifications = &notification.Service{Store: s, Vault: vault}
 	mux := http.NewServeMux()
 	a.roleRoutes(mux)
+	a.changeJournalRoutes(mux)
 	a.listRoutes(mux)
 	a.healthRoutes(mux)
 	a.tenantRoutes(mux)

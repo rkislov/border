@@ -55,7 +55,7 @@ func TestRolesScopeAndLiveSessionInvalidation(t *testing.T) {
 	for _, tc := range []struct {
 		user, path string
 		code       int
-	}{{"op", "/api/sessions?LocationID=west", 200}, {"op", "/api/events", 403}, {"view", "/api/policy-notifications", 403}, {"op", "/api/policy-notifications/push-key", 403}, {"op", "/api/state", 403}, {"op", "/api/notifications?scope=default", 403}, {"op", "/api/admins", 403}, {"op", "/api/metrics", 403}, {"op", "/metrics", 403}, {"op", "/api/tenants", 403}, {"view", "/api/sessions", 200}, {"view", "/api/events", 200}, {"view", "/api/portal-design?scope=tenant", 403}, {"view", "/api/access-model", 403}, {"view", "/api/admins", 403}, {"view", "/api/policy-drafts", 403}, {"view", "/api/policy-drafts/reviews/missing", 403}, {"op", "/api/policy-drafts/impact?kind=access&id=vpn", 403}} {
+	}{{"op", "/api/sessions?LocationID=west", 200}, {"op", "/api/events", 403}, {"view", "/api/policy-notifications", 403}, {"view", "/api/change-journal", 403}, {"op", "/api/change-journal/missing", 403}, {"op", "/api/policy-notifications/push-key", 403}, {"op", "/api/state", 403}, {"op", "/api/notifications?scope=default", 403}, {"op", "/api/admins", 403}, {"op", "/api/metrics", 403}, {"op", "/metrics", 403}, {"op", "/api/tenants", 403}, {"view", "/api/sessions", 200}, {"view", "/api/events", 200}, {"view", "/api/portal-design?scope=tenant", 403}, {"view", "/api/access-model", 403}, {"view", "/api/admins", 403}, {"view", "/api/policy-drafts", 403}, {"view", "/api/policy-drafts/reviews/missing", 403}, {"op", "/api/policy-drafts/impact?kind=access&id=vpn", 403}} {
 		w := send("GET", tc.path, tc.user, nil, nil, "")
 		if w.Code != tc.code {
 			t.Fatalf("%s %s: %d", tc.user, tc.path, w.Code)

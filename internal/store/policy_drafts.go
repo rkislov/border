@@ -217,7 +217,10 @@ func (s *Store) savePolicyDraftTx(ctx context.Context, tx *sql.Tx, d PolicyDraft
 	if e = s.invalidateDraftReviews(ctx, tx, d.Kind, d.PolicyID, "draft changed"); e != nil {
 		return e
 	}
-	return nil
+	if len(current.Payload) == 0 {
+		current.Payload = json.RawMessage("null")
+	}
+	return s.appendChange(ctx, tx, ChangeEvent{Action: "draft_saved", Actor: actor}, []DraftRef{{d.Kind, d.PolicyID, next}}, map[string]any{"Before": current.Payload, "After": canonical, "Base": base})
 }
 func (s *Store) PolicyDrafts(ctx context.Context) ([]PolicyDraft, error) {
 	rows, e := s.DB.QueryContext(ctx, "SELECT kind,policy_id,revision,base,payload,actor,updated_at FROM policy_drafts ORDER BY updated_at DESC,kind,policy_id")
@@ -274,7 +277,7 @@ func (s *Store) PolicyDraftImpact(ctx context.Context, kind, id string) (PolicyI
 func (s *Store) PublishPolicyDraft(ctx context.Context, kind, id string, revision int64, actor string) error {
 	return s.PublishPolicyBatch(ctx, []DraftRef{{Kind: kind, PolicyID: id, Revision: revision}}, actor)
 }
-func (s *Store) DiscardPolicyDraft(ctx context.Context, kind, id string, revision int64) error {
+func (s *Store) DiscardPolicyDraft(ctx context.Context, kind, id string, revision int64, actors ...string) error {
 	tx, e := s.policyTx(ctx)
 	if e != nil {
 		return e
@@ -297,6 +300,16 @@ func (s *Store) DiscardPolicyDraft(ctx context.Context, kind, id string, revisio
 	if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM policy_draft_authors WHERE kind=? AND policy_id=?"), kind, id); e != nil {
 		return e
 	}
+	actor := "unknown"
+	if len(actors) > 0 {
+		actor = actors[0]
+	}
+	if e = s.appendChange(ctx, tx, ChangeEvent{Action: "draft_discarded", Actor: actor}, []DraftRef{{kind, id, revision}}, nil); e != nil {
+		return e
+	}
+	if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM draft_journal_cycles WHERE kind=? AND policy_id=?"), kind, id); e != nil {
+		return e
+	}
 	return tx.Commit()
 }
 func (s *Store) RollbackPolicyDraft(ctx context.Context, release, actor string) error {
@@ -305,8 +318,8 @@ func (s *Store) RollbackPolicyDraft(ctx context.Context, release, actor string) 
 		return e
 	}
 	defer tx.Rollback()
-	var kind, id, raw string
-	if e = tx.QueryRowContext(ctx, s.SQL("SELECT kind,policy_id,before_payload FROM policy_releases WHERE id=?"), release).Scan(&kind, &id, &raw); e != nil {
+	var kind, id, raw, batch string
+	if e = tx.QueryRowContext(ctx, s.SQL("SELECT kind,policy_id,before_payload,batch_id FROM policy_releases WHERE id=?"), release).Scan(&kind, &id, &raw, &batch); e != nil {
 		return e
 	}
 	restored, e := s.rollbackPayload(ctx, tx, kind, id, json.RawMessage(raw))
@@ -315,6 +328,13 @@ func (s *Store) RollbackPolicyDraft(ctx context.Context, release, actor string) 
 	}
 	raw = string(restored)
 	if e = s.savePolicyDraftTx(ctx, tx, PolicyDraft{Kind: kind, PolicyID: id, Payload: json.RawMessage(raw)}, actor); e != nil {
+		return e
+	}
+	d, e := draftTx(ctx, s, tx, kind, id)
+	if e != nil {
+		return e
+	}
+	if e = s.appendChange(ctx, tx, ChangeEvent{Action: "rollback_prepared", Actor: actor, BatchID: batch, Summary: "Подготовлен черновик отката публикации " + release}, []DraftRef{{kind, id, d.Revision}}, map[string]string{"SourceReleaseID": release}); e != nil {
 		return e
 	}
 	return tx.Commit()

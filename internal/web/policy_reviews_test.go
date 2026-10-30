@@ -117,4 +117,22 @@ func TestReviewAPISelfApprovalCSRFAndPublicationGuard(t *testing.T) {
 	if w.Code != 200 || review.Requester != "alice" || review.Reviewer != "bob" || review.State != "published" || len(review.Snapshot) != 1 {
 		t.Fatal(w.Code, w.Body.String())
 	}
+	w = send("GET", "/api/change-journal?action=published&actor=alice&q=staff&limit=1", "alice", "", "")
+	var journal store.ChangePage
+	if e = json.Unmarshal(w.Body.Bytes(), &journal); e != nil || w.Code != 200 || len(journal.Items) != 1 || journal.Items[0].ReviewID != request.ID {
+		t.Fatal(w.Code, w.Body.String(), e)
+	}
+	w = send("GET", "/api/change-journal/"+journal.Items[0].ID, "alice", "", "")
+	var change store.ChangeDetail
+	if e = json.Unmarshal(w.Body.Bytes(), &change); e != nil || w.Code != 200 || change.Event.Actor != "alice" || len(change.Objects) != 1 || len(change.Timeline) != 6 {
+		t.Fatal(w.Code, w.Body.String(), e)
+	}
+	for _, path := range []string{"?before=bad", "?before=-1", "?limit=0", "?limit=101", "?limit=bad"} {
+		if w = send("GET", "/api/change-journal"+path, "alice", "", ""); w.Code != 400 {
+			t.Fatal("invalid journal filter", path, w.Code)
+		}
+	}
+	if w = send("GET", "/api/change-journal/missing", "alice", "", ""); w.Code != 404 {
+		t.Fatal("missing journal record", w.Code)
+	}
 }

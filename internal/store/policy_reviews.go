@@ -66,6 +66,9 @@ func (s *Store) reviewAudit(ctx context.Context, tx *sql.Tx, actor, action strin
 	if e != nil {
 		return e
 	}
+	if e = s.journalReviewAudit(ctx, tx, actor, action); e != nil {
+		return e
+	}
 	if strings.HasPrefix(action, "require policy approval:") || (strings.HasPrefix(action, "scheduled policy publication ") && strings.Contains(action, ": published")) {
 		return nil
 	}
@@ -131,6 +134,9 @@ func (s *Store) invalidateReviewSelection(ctx context.Context, tx *sql.Tx, where
 	}
 	for _, id := range ids {
 		if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_reviews SET state='stale',reason=?,updated_at=? WHERE id=?"), reason, time.Now().Unix(), id); e != nil {
+			return e
+		}
+		if e = s.appendReviewChange(ctx, tx, id, "review_stale", "system", reason, ""); e != nil {
 			return e
 		}
 		if e = s.enqueuePolicyEvent(ctx, tx, "review stale "+id, "Border: согласование пакета "+id+" сброшено. Причина: "+reason+". Требуется новая проверка."); e != nil {
