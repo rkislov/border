@@ -395,6 +395,10 @@ func (s *Store) PublishPolicyBatch(ctx context.Context, refs []DraftRef, actor s
 	if e != nil {
 		return e
 	}
+	reviewID, e := s.requireBatchApproval(ctx, tx, ds, actor)
+	if e != nil {
+		return e
+	}
 	t := newTargets()
 	after, e := s.applyBatch(ctx, tx, ds, t)
 	if e != nil {
@@ -427,8 +431,19 @@ func (s *Store) PublishPolicyBatch(ctx context.Context, refs []DraftRef, actor s
 		}
 	}
 	batch := uuid.NewString()
+	if reviewID != "" {
+		if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_reviews SET state='published',batch_id=?,updated_at=? WHERE id=?"), batch, time.Now().Unix(), reviewID); e != nil {
+			return e
+		}
+	}
 	for i, d := range ds {
 		if _, e = tx.ExecContext(ctx, s.SQL("INSERT INTO policy_releases(id,kind,policy_id,before_payload,after_payload,actor,created_at,batch_id) VALUES(?,?,?,?,?,?,?,?)"), uuid.NewString(), d.Kind, d.PolicyID, string(d.Base), string(after[i]), actor, time.Now().Unix(), batch); e != nil {
+			return e
+		}
+		if e = s.invalidateDraftReviews(ctx, tx, d.Kind, d.PolicyID, "draft published in another package"); e != nil {
+			return e
+		}
+		if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM policy_draft_authors WHERE kind=? AND policy_id=?"), d.Kind, d.PolicyID); e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM policy_drafts WHERE kind=? AND policy_id=?"), d.Kind, d.PolicyID); e != nil {

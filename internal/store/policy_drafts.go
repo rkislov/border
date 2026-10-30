@@ -211,6 +211,12 @@ func (s *Store) savePolicyDraftTx(ctx context.Context, tx *sql.Tx, d PolicyDraft
 	if e != nil {
 		return e
 	}
+	if _, e = tx.ExecContext(ctx, s.SQL("INSERT INTO policy_draft_authors(kind,policy_id,username) VALUES(?,?,?) ON CONFLICT(kind,policy_id,username) DO NOTHING"), d.Kind, d.PolicyID, actor); e != nil {
+		return e
+	}
+	if e = s.invalidateDraftReviews(ctx, tx, d.Kind, d.PolicyID, "draft changed"); e != nil {
+		return e
+	}
 	return nil
 }
 func (s *Store) PolicyDrafts(ctx context.Context) ([]PolicyDraft, error) {
@@ -284,6 +290,12 @@ func (s *Store) DiscardPolicyDraft(ctx context.Context, kind, id string, revisio
 	}
 	if n != 1 {
 		return fmt.Errorf("draft changed; reload")
+	}
+	if e = s.invalidateDraftReviews(ctx, tx, kind, id, "draft discarded"); e != nil {
+		return e
+	}
+	if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM policy_draft_authors WHERE kind=? AND policy_id=?"), kind, id); e != nil {
+		return e
 	}
 	return tx.Commit()
 }
