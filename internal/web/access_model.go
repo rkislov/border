@@ -77,14 +77,14 @@ func (a *app) accessRoutes(m *http.ServeMux) {
 		if !decode(w, r, &set) {
 			return
 		}
-		a.finish(w, r, a.s.SaveNASPolicies(r.Context(), set), "save NAS policy bindings")
+		a.stagePolicy(w, r, "nas-policies", set.NAS, set)
 	})
 	m.HandleFunc("POST /api/user-groups", func(w http.ResponseWriter, r *http.Request) {
 		var g store.UserGroup
 		if !decode(w, r, &g) {
 			return
 		}
-		a.finish(w, r, a.s.SaveUserGroup(r.Context(), g), "save local group")
+		a.stagePolicy(w, r, "group", g.ID, g)
 	})
 	m.HandleFunc("POST /api/access-rules", func(w http.ResponseWriter, r *http.Request) {
 		var c store.RuleSet
@@ -115,7 +115,7 @@ func (a *app) accessRoutes(m *http.ServeMux) {
 		if !decode(w, r, &v) {
 			return
 		}
-		a.finish(w, r, a.s.SaveMapping(r.Context(), v), "save location/NAS segment mapping")
+		a.stagePolicy(w, r, "mapping", store.MappingDraftID(v), v)
 	})
 	for _, kind := range []string{"locations", "network_segments"} {
 		m.HandleFunc("POST /api/"+kind, func(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +125,10 @@ func (a *app) accessRoutes(m *http.ServeMux) {
 			}
 			if !identitysource.IDPattern.MatchString(v.ID) || v.Name == "" || len(v.Name) > 100 {
 				http.Error(w, "ID and name required", 400)
+				return
+			}
+			if kind == "network_segments" {
+				a.stagePolicy(w, r, "segment", v.ID, v)
 				return
 			}
 			a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO "+kind+"(id,name) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name", v.ID, v.Name), "save "+kind)

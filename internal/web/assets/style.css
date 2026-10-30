@@ -21,3 +21,4 @@ aside nav{display:block}nav button[data-view]{width:100%}nav .nav-group>summary{
 .portal-methods{display:grid;gap:12px;margin:24px 0}.portal-methods[hidden]{display:none}.portal-methods button{padding:16px 24px;border:1px solid #285b48;border-radius:10px;background:#285b48;color:white;font:inherit;cursor:pointer}
 
 main.operations{margin:0 auto;width:100%;max-width:1400px;padding:32px 24px}.operations button{padding:10px 16px;border-radius:6px;background:#245542;color:white;margin:6px}.operations button:disabled{opacity:.4;cursor:default}.operations input{padding:10px;max-width:100%}.operations #results{margin-top:24px}
+.draft-entry{padding:1rem 0;border-bottom:1px solid #dbe5e1}.draft-entry button{margin:.25rem .5rem .25rem 0}#policy-impact pre,#policy-release-list pre{white-space:pre-wrap;overflow-wrap:anywhere}#policy-impact details p{overflow-wrap:anywhere}
