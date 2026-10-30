@@ -24,18 +24,19 @@ import (
 )
 
 type Service struct {
-	SenderForContext func(context.Context, string, string) (sms.SMSProvider, error)
-	SendEmail        func(context.Context, string, string, string, string) error
-	PublicURL        string
-	Store            *store.Store
-	Vault            *auth.Vault
-	key              []byte
-	SMS              sms.SMSProvider
-	SenderForNAS     func(context.Context, string) (sms.SMSProvider, error)
-	Reconnect        func(context.Context, string, string, string, int) error
-	mu               sync.Mutex
-	provider         *sms.HTTPProvider
-	fingerprint      [32]byte
+	AvailableChannels func(context.Context, string, string) ([]string, error)
+	SenderForContext  func(context.Context, string, string) (sms.SMSProvider, error)
+	SendEmail         func(context.Context, string, string, string, string) error
+	PublicURL         string
+	Store             *store.Store
+	Vault             *auth.Vault
+	key               []byte
+	SMS               sms.SMSProvider
+	SenderForNAS      func(context.Context, string) (sms.SMSProvider, error)
+	Reconnect         func(context.Context, string, string, string, int) error
+	mu                sync.Mutex
+	provider          *sms.HTTPProvider
+	fingerprint       [32]byte
 }
 type Challenge struct {
 	ID            string
