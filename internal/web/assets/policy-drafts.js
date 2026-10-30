@@ -1,5 +1,5 @@
 'use strict';
-let policyDraftCache=[], draftChoiceModel=null;
+let policyDraftCache=[], draftChoiceModel=null, reviewSettings={Required:false,Revision:0}, policyReviews=[], reviewUsername="";
 const policyKindNames={authentication:'Авторизация',access:'Доступ',rules:'Правила доступа',group:'Группа',segment:'Сегмент',mapping:'Сопоставление VLAN','nas-policies':'Набор политик NAS','nas-assignment':'Одиночная политика NAS'};
 const selectedDrafts=new Set();
 const draftKey=d=>d.Kind+'/'+d.PolicyID;
@@ -16,7 +16,7 @@ function applyDraftChoices(){
  const sel=$('#assignment-nas'),old=sel.value;sel.replaceChildren(new Option('Выберите NAS',''));for(const n of state?.nas||[])sel.add(new Option(n.Name+' · '+n.Address,n.Address));sel.value=old;
 }
 async function loadPolicyDrafts(){
- const v=await draftAPI('');policyDraftCache=v.Drafts;const keys=new Set(v.Drafts.map(draftKey));for(const key of selectedDrafts)if(!keys.has(key))selectedDrafts.delete(key);
+ const v=await draftAPI('');updateReviewState(v);renderReviews();policyDraftCache=v.Drafts;const keys=new Set(v.Drafts.map(draftKey));for(const key of selectedDrafts)if(!keys.has(key))selectedDrafts.delete(key);
  const holder=$('#policy-draft-list');holder.replaceChildren();
  if(!v.Drafts.length)draftText(holder,'p','Черновиков пока нет. Сохраните изменения в редакторе.');
  for(const d of v.Drafts){
@@ -45,21 +45,23 @@ function renderDraftDiff(h,d){
  const labels={Name:'Название',Enabled:'Включено',Source:'Источник',DomainID:'Домен',Steps:'Проверки',AuthenticationID:'Авторизация',Mode:'Назначение',SegmentID:'Сегмент',LocationID:'Расположение',VLAN:'VLAN',AccessPolicyID:'Политика доступа',SessionSeconds:'Срок сессии, сек.',Subjects:'Личности',Members:'Участники',Rules:'Правила',Bindings:'Привязки'};
  for(const key of Object.keys(d.Payload)){if(['ID','PolicyID','Version','NAS'].includes(key))continue;const before=d.Base?.[key],after=d.Payload[key];if(JSON.stringify(before)!==JSON.stringify(after))draftText(details,'p',(labels[key]||key)+': '+(before===undefined?'—':JSON.stringify(before))+' → '+JSON.stringify(after));}h.append(details);
 }
-async function showPolicyBatch(ds){
+async function showPolicyBatch(ds,selectedReview=null){
+ updateReviewState(await draftAPI(''));
  const refs=ds.map(draftRef),v=await draftAPI('/batch/impact',{Drafts:refs}),h=$('#policy-impact');h.hidden=false;h.replaceChildren();draftText(h,'h2','Оценка пакета · '+refs.length+' изменений');
  draftText(h,'p','NAS: '+v.Devices.length+' · связанные активные/зависшие сессии: '+v.Sessions.length+' · без привязки: '+v.UnlinkedSessions.length+'.');
  draftText(h,'p','Проверяются зависимости итоговой конфигурации. Снимок сессий может измениться к публикации; работа LDAP и фактический Disconnect на оборудовании здесь не проверяются.');
  for(const error of v.Errors)draftText(h,'p','Публикация заблокирована: '+error);
  draftText(h,'p',v.Devices.join(', ')||'Затронутых NAS нет');for(const d of v.Drafts)renderDraftDiff(h,d);
  for(const [label,items] of [['Потребуют повторного входа',v.Sessions],['Не отключаются автоматически: нет привязки',v.UnlinkedSessions]]){draftText(h,'h3',label);for(const s of items)draftText(h,'p',s.NAS+' · '+s.ID+' · '+s.Username+' · '+s.Status);}
- if(!v.Errors.length)h.append(draftButton('Опубликовать пакет',async()=>{if(!confirm('Опубликовать весь пакет? Затронутые разрешения будут отозваны.'))return;await draftAPI('/batch/publish',{Drafts:refs});h.hidden=true;selectedDrafts.clear();await load();notice('Пакет опубликован целиком. Ход отзыва доступен в разделе сессий.');}));
+ renderReviewActions(h,refs,v,selectedReview);
+
 }
 $('#drafts-refresh').onclick=()=>{ $('#policy-impact').hidden=true;loadPolicyDrafts().catch(e=>notice(e.message,true));};
 $('#drafts-select-all').onclick=()=>{for(const d of policyDraftCache)selectedDrafts.add(draftKey(d));loadPolicyDrafts().catch(e=>notice(e.message,true));};
 $('#drafts-assess').onclick=()=>{const ds=policyDraftCache.filter(d=>selectedDrafts.has(draftKey(d)));if(!ds.length){notice('Выберите черновики для пакета',true);return;}showPolicyBatch(ds).catch(e=>notice(e.message,true));};
 for(const id of ['authentication-form','access-form','user-group-form','segment-form','mapping-form']){const f=$('#'+id);f.querySelector('button[type="submit"],button.primary').textContent='Сохранить черновик';const p=document.createElement('p');p.textContent='Сохранение создаёт черновик. Применение — в разделе «Черновики и публикации».';f.prepend(p);}
 $('#save-rules').textContent='Сохранить черновик правил';$('#bindings-save').textContent='Сохранить черновик привязок';
-$('#assignment-nas').onchange=()=>{const nas=$('#assignment-nas').value,d=policyDraftCache.find(d=>d.Kind==='nas-assignment'&&d.PolicyID===nas);$('#nas-assignment-form').elements.AccessPolicyID.value=d?.Payload.AccessPolicyID??state?.nas.find(n=>n.Address===nas)?.AccessPolicyID??'';};
+$('#assignment-nas').onchange=()=>{const nas=$('#assignment-nas').value,d=policyDraftCache.find(d=>d.Kind==='nas-assignment'&&d.PolicyID===nas);$('#nas-assignment-form').elements.AccessPolicyID.value=d?.Payload?.AccessPolicyID??state?.nas.find(n=>n.Address===nas)?.AccessPolicyID??'';};
 $('#nas-assignment-form').onsubmit=async e=>{e.preventDefault();await savePolicyDraft('nas-assignment',Object.fromEntries(new FormData(e.target)));};
 
 function renderDeletionChoices(){
@@ -78,3 +80,22 @@ function renderDeletionChoices(){
 }
 $('#deletion-kind').onchange=renderDeletionChoices;
 $('#deletion-form').onsubmit=async e=>{e.preventDefault();const kind=$('#deletion-kind').value,id=$('#deletion-object').value,d=policyDraftCache.find(x=>x.Kind===kind&&x.PolicyID===id);if(d&&!confirm('Заменить существующий черновик '+id+' на удаление?'))return;try{await draftAPI('',{Kind:kind,PolicyID:id,Revision:d?.Revision||0,Operation:'delete'});$('#policy-impact').hidden=true;await loadPolicyDrafts();notice('Черновик удаления создан. Объект действует до публикации пакета.');}catch(e){notice(e.message,true);}};
+
+const reviewStateLabels={pending:'Ожидает проверки',approved:'Одобрен',rejected:'Отклонён',stale:'Согласование сброшено',published:'Опубликован'};
+const reviewRefsKey=refs=>JSON.stringify(refs.map(r=>[r.Kind,r.PolicyID,r.Revision]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));
+function updateReviewState(v){reviewSettings=v.ReviewSettings;policyReviews=v.Reviews;reviewUsername=v.Username;$('#review-required').checked=reviewSettings.Required;$('#review-mode-status').textContent=reviewSettings.Required?'Публикация требует одобрения второго администратора.':'Согласование выключено: администратор может публиковать самостоятельно.';}
+function renderReviews(){const holder=$('#review-list');holder.replaceChildren();if(!policyReviews.length)draftText(holder,'p','Заявок на согласование пока нет.');for(const r of policyReviews){const row=document.createElement('div');row.className='draft-entry';draftText(row,'h3',(reviewStateLabels[r.State]||r.State)+' · '+r.ID.slice(0,8));draftText(row,'p','Отправил '+r.Requester+' · '+date(r.CreatedAt)+' · объектов: '+r.Drafts.length);if(r.RequestComment)draftText(row,'p','Комментарий автора: '+r.RequestComment);if(r.Reviewer)draftText(row,'p','Проверил '+r.Reviewer+(r.DecisionComment?' · '+r.DecisionComment:''));if(r.Reason)draftText(row,'p','Причина: '+reviewReason(r.Reason));if(r.BatchID)draftText(row,'p','Публикация: '+r.BatchID);row.append(draftButton('Открыть заявку',async()=>{const full=await draftAPI('/reviews/'+encodeURIComponent(r.ID));await showPolicyBatch(full.Drafts,full);}));holder.append(row);}}
+function reviewReason(reason){return ({'draft changed':'Изменена редакция черновика','draft discarded':'Черновик удалён','draft published in another package':'Черновик опубликован в другом пакете','approval mode changed':'Изменён режим согласования','reviewer account changed':'Изменены права или учётная запись согласующего'})[reason]||reason;}
+function reviewComment(h,text){const label=document.createElement('label');label.append(document.createTextNode(text));const input=document.createElement('textarea');input.maxLength=1000;input.rows=3;label.append(input);h.append(label);return input;}
+function renderReviewActions(h,refs,impact,selectedReview){
+ const key=reviewRefsKey(refs),active=policyReviews.find(r=>['pending','approved'].includes(r.State)&&reviewRefsKey(r.Drafts)===key),review=selectedReview?(policyReviews.find(r=>r.ID===selectedReview.ID)||selectedReview):active;
+ if(review){draftText(h,'h3','Согласование: '+(reviewStateLabels[review.State]||review.State));draftText(h,'p','Отправил '+review.Requester+' · '+date(review.CreatedAt));if(review.RequestComment)draftText(h,'p',review.RequestComment);if(review.Reviewer)draftText(h,'p','Проверил '+review.Reviewer+' · '+review.DecisionComment);if(review.Reason)draftText(h,'p',reviewReason(review.Reason));}
+ if(selectedReview&&impact.Errors.length){const history=document.createElement('details');draftText(history,'summary','Снимок изменений на момент отправки');for(const d of selectedReview.Snapshot||[])renderDraftDiff(history,d);h.append(history);}
+ if(reviewSettings.Required&&review?.State==='pending'){
+  if(review.Authors.includes(reviewUsername)){draftText(h,'p','Отправитель и авторы черновиков не могут согласовать свой пакет. Ожидается другой администратор.');}
+  else {const comment=reviewComment(h,'Комментарий проверяющего (обязателен при отклонении)');const decide=async approve=>{if(!approve&&!comment.value.trim()){notice('Укажите причину отклонения',true);return;}await draftAPI('/reviews/decision',{ID:review.ID,Approve:approve,Comment:comment.value});await loadPolicyDrafts();await showPolicyBatch(refs);notice(approve?'Пакет одобрен. Изменение черновика сбросит одобрение.':'Пакет отклонён.');};if(!impact.Errors.length)h.append(draftButton('Одобрить пакет',()=>decide(true)));h.append(draftButton('Отклонить пакет',()=>decide(false)));}
+ }
+ if(!impact.Errors.length&&reviewSettings.Required&&!active){const comment=reviewComment(h,'Комментарий для согласующего');h.append(draftButton('Отправить на согласование',async()=>{await draftAPI('/reviews',{Drafts:refs,Comment:comment.value});await loadPolicyDrafts();await showPolicyBatch(refs);notice('Пакет отправлен другому администратору на проверку.');}));}
+ if(!impact.Errors.length&&(!reviewSettings.Required||active?.State==='approved'))h.append(draftButton('Опубликовать пакет',async()=>{if(!confirm('Опубликовать весь пакет? Затронутые разрешения будут отозваны.'))return;await draftAPI('/batch/publish',{Drafts:refs});h.hidden=true;selectedDrafts.clear();await load();notice('Пакет опубликован целиком. Ход отзыва доступен в разделе сессий.');}));
+}
+$('#review-settings-form').onsubmit=async e=>{e.preventDefault();try{await draftAPI('/review-settings',{Required:$('#review-required').checked,Revision:reviewSettings.Revision});$('#policy-impact').hidden=true;await loadPolicyDrafts();notice('Режим согласования сохранён.');}catch(err){notice(err.message,true);}};
