@@ -26,7 +26,7 @@ func TestCapabilityCatalog(t *testing.T) {
 				t.Fatal(p.ID, f)
 			}
 			seen[f.ID] = true
-			if (f.ID == "peap" || f.ID == "radsec") && f.Available {
+			if (f.ID == "radsec") && f.Available {
 				t.Fatal("unsupported feature advertised")
 			}
 		}

@@ -21,10 +21,17 @@ import (
 )
 
 func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host string, engine *eap.Engine, selected ...*store.BoundPolicy) ([]byte, error) {
+	return processEAPTunnel(ctx, s, p, host, engine, selected, nil, Options{})
+}
+func processEAPTunnel(ctx context.Context, s *store.Store, p *radius.Packet, host string, engine *eap.Engine, selected []*store.BoundPolicy, tunnel *eap.Tunnel, o Options) ([]byte, error) {
 	var message, state []byte
 	var states int
 	for _, a := range p.Attributes {
 		switch a.Type {
+		case 2, 3:
+			if tunnel != nil {
+				return nil, errors.New("mixed tunneled EAP credentials")
+			}
 		case 79:
 			message = append(message, a.Attribute...)
 		case 24:
@@ -55,7 +62,12 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 		digest := sha256.Sum256(encoded)
 		peer = append(peer, digest[:]...)
 	}
-	reply := engine.Handle(ctx, string(peer), state, message)
+	var reply eap.Reply
+	if tunnel == nil {
+		reply = engine.Handle(ctx, string(peer), state, message)
+	} else {
+		reply = engine.HandleTunnel(ctx, string(peer), state, message, *tunnel)
+	}
 	if reply.Accept {
 		current, configured, e := selectPolicy(ctx, s, p, host)
 		if e != nil || configured && current == nil || !reflect.DeepEqual(current, bound) {
@@ -67,11 +79,14 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 		if policyErr == nil {
 			timeout, policyErr = bound.Timeout(time.Now())
 		}
-		if policyErr == nil && (bound.Authentication.Source != "eap_tls" || bound.Access.Mode != "network") {
+		if policyErr == nil && ((tunnel == nil && bound.Authentication.Source != "eap_tls") || bound.Access.Mode != "network") {
 			policyErr = errors.New("identity not permitted by access policy")
 		}
+		if policyErr == nil && tunnel != nil && bound.Authentication.Source == "directory" {
+			reply.Authorization.Groups, policyErr = o.Identities.DomainGroups(ctx, reply.Authorization.Identity)
+		}
 		if policyErr == nil {
-			allowed, _, e := evaluatePolicy(ctx, s, p, host, reply.Authorization.Identity, nil, bound)
+			allowed, _, e := evaluatePolicy(ctx, s, p, host, reply.Authorization.Identity, reply.Authorization.Groups, bound)
 			if e != nil || !allowed {
 				policyErr = errors.New("access rule rejected")
 			}
@@ -89,6 +104,13 @@ func processEAP(ctx context.Context, s *store.Store, p *radius.Packet, host stri
 	}
 	if reply.Accept {
 		if enabled, e := s.IdentityEnabled(ctx, reply.Authorization.Identity); e != nil || !enabled {
+			policyErr = errors.New("identity disabled")
+		}
+	}
+	if reply.Accept && tunnel != nil {
+		if o.Identities == nil {
+			policyErr = errors.New("identity service unavailable")
+		} else if enabled, err := o.Identities.AccountEnabled(ctx, reply.Authorization.Identity); err != nil || !enabled {
 			policyErr = errors.New("identity disabled")
 		}
 	}

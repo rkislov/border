@@ -50,7 +50,7 @@ func Describe(dictionary string) (Capabilities, bool) {
 	add("ssh", "Авторизация SSH", SupportsMode(dictionary, "ssh"), "Включить AAA и настроить локальные группы/уровни прав. Проверить поддерживаемый метод RADIUS на конкретной модели.")
 	add("vpn", "Авторизация VPN", SupportsMode(dictionary, "vpn"), "Согласовать PAP или EAP-MSCHAPv2 с политикой и VPN-клиентом. OpenVPN требует отдельного RADIUS-плагина.")
 	add("eap_tls", "EAP-TLS 1.2", true, "802.1X NAS, доверенный CA и управляемый клиентский сертификат. Наличие реализации Border не означает поддержку VPN-плагином.")
-	add("peap", "PEAP / EAP-TTLS", false, "Планируется; EAP-MSCHAPv2 для IKEv2 не заменяет PEAP.")
+	add("peap", "PEAP-MSCHAPv2 / TTLS-PAP", true, "TLS 1.2; выбрать метод в политике local/directory для сети. Проверять CA и имя сервера на клиенте. Проверено eapol_test; физические NAS не проверены. Без resumption и PEAP cryptobinding.")
 	add("accounting", "Учёт сессий", true, "Start, Interim, Stop; Class без изменений, Event-Timestamp, Acct-Session-Time. Синхронизировать часы и включить accounting на NAS.")
 	add("disconnect", "Отзыв доступа", true, "RFC 5176, общий секрет, доступ к CoA-порту. Связь с разрешением обязательна для автоматического отзыва; ACK не гарантирован словарём.")
 	add("coa_vlan", "Смена VLAN через CoA", true, "NAS должен поддерживать CoA и tunnel-атрибуты для данного вида сессии; требуется проверка на модели.")

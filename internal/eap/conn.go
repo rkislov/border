@@ -18,9 +18,10 @@ type flightEvent struct {
 	result *tlsResult
 }
 type tlsResult struct {
-	state tls.ConnectionState
-	key   []byte
-	err   error
+	authorization Authorization
+	state         tls.ConnectionState
+	key           []byte
+	err           error
 }
 type flightConn struct {
 	ctx      context.Context

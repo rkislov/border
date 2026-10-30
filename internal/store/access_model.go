@@ -14,9 +14,9 @@ import (
 )
 
 type AuthenticationPolicy struct {
-	ID, Name, Source, DomainID string
-	RequireTOTP, Enabled       bool
-	Steps                      []string
+	ID, Name, Source, DomainID, EAPMethod string
+	RequireTOTP, Enabled                  bool
+	Steps                                 []string
 }
 type AccessPolicy struct {
 	ID, Name, AuthenticationID, Mode, SegmentID string
@@ -55,7 +55,7 @@ func (s *Store) policyForNAS(ctx context.Context, nas, id string) (*BoundPolicy,
 	a, b := &p.Access, &p.Authentication
 	var segment, domain sql.NullString
 	var steps string
-	err := s.Row(ctx, "SELECT p.id,p.name,p.authentication_id,p.mode,p.segment_id,p.valid_from,p.valid_until,p.session_seconds,p.idle_seconds,p.privilege,p.group_name,p.role,p.filter_id,p.enabled,a.id,a.name,a.source,a.domain_id,a.require_totp,a.enabled,a.steps FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", id).Scan(&a.ID, &a.Name, &a.AuthenticationID, &a.Mode, &segment, &a.ValidFrom, &a.ValidUntil, &a.SessionSeconds, &a.IdleSeconds, &a.Privilege, &a.Group, &a.Role, &a.Filter, &a.Enabled, &b.ID, &b.Name, &b.Source, &domain, &b.RequireTOTP, &b.Enabled, &steps)
+	err := s.Row(ctx, "SELECT p.id,p.name,p.authentication_id,p.mode,p.segment_id,p.valid_from,p.valid_until,p.session_seconds,p.idle_seconds,p.privilege,p.group_name,p.role,p.filter_id,p.enabled,a.id,a.name,a.source,a.domain_id,a.require_totp,a.enabled,a.steps,a.eap_method FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", id).Scan(&a.ID, &a.Name, &a.AuthenticationID, &a.Mode, &segment, &a.ValidFrom, &a.ValidUntil, &a.SessionSeconds, &a.IdleSeconds, &a.Privilege, &a.Group, &a.Role, &a.Filter, &a.Enabled, &b.ID, &b.Name, &b.Source, &domain, &b.RequireTOTP, &b.Enabled, &steps, &b.EAPMethod)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (s *Store) SaveAuthentication(ctx context.Context, a AuthenticationPolicy) 
 	} else if a.DomainID != "" {
 		return fmt.Errorf("domain only applies to directory authentication")
 	}
-	return s.Exec(ctx, "INSERT INTO authentication_policies(id,name,source,domain_id,require_totp,enabled,steps) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,source=excluded.source,domain_id=excluded.domain_id,require_totp=excluded.require_totp,enabled=excluded.enabled,steps=excluded.steps", a.ID, a.Name, a.Source, domain, integer(a.RequireTOTP), integer(a.Enabled), string(steps))
+	return s.Exec(ctx, "INSERT INTO authentication_policies(id,name,source,domain_id,require_totp,enabled,steps,eap_method) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,source=excluded.source,domain_id=excluded.domain_id,require_totp=excluded.require_totp,enabled=excluded.enabled,steps=excluded.steps,eap_method=excluded.eap_method", a.ID, a.Name, a.Source, domain, integer(a.RequireTOTP), integer(a.Enabled), string(steps), a.EAPMethod)
 }
 func integer(b bool) int {
 	if b {
@@ -170,11 +170,11 @@ func (s *Store) SaveAccess(ctx context.Context, a AccessPolicy) error {
 	if len(a.Subjects) > 1000 {
 		return fmt.Errorf("maximum 1000 explicit identities")
 	}
-	var source string
-	if err := s.Row(ctx, "SELECT source FROM authentication_policies WHERE id=?", a.AuthenticationID).Scan(&source); err != nil {
+	var source, method string
+	if err := s.Row(ctx, "SELECT source,eap_method FROM authentication_policies WHERE id=?", a.AuthenticationID).Scan(&source, &method); err != nil {
 		return fmt.Errorf("authentication policy required")
 	}
-	if a.Mode != "network" && (source == "mab" || source == "eap_tls") {
+	if a.Mode != "network" && (source == "mab" || source == "eap_tls" || method != "") {
 		return fmt.Errorf("SSH/VPN policy currently requires PAP authentication")
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -200,7 +200,7 @@ func (s *Store) SaveAccess(ctx context.Context, a AccessPolicy) error {
 	return tx.Commit()
 }
 func (s *Store) Authentications(ctx context.Context) ([]AuthenticationPolicy, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT id,name,source,COALESCE(domain_id,''),require_totp,enabled,steps FROM authentication_policies ORDER BY name")
+	rows, err := s.DB.QueryContext(ctx, "SELECT id,name,source,COALESCE(domain_id,''),require_totp,enabled,steps,eap_method FROM authentication_policies ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (s *Store) Authentications(ctx context.Context) ([]AuthenticationPolicy, er
 	for rows.Next() {
 		var a AuthenticationPolicy
 		var steps string
-		if err = rows.Scan(&a.ID, &a.Name, &a.Source, &a.DomainID, &a.RequireTOTP, &a.Enabled, &steps); err != nil {
+		if err = rows.Scan(&a.ID, &a.Name, &a.Source, &a.DomainID, &a.RequireTOTP, &a.Enabled, &steps, &a.EAPMethod); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(steps), &a.Steps); err != nil {
