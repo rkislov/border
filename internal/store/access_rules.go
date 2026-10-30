@@ -108,17 +108,24 @@ func (s *Store) Rules(ctx context.Context, id string) (RuleSet, error) {
 	return c, e
 }
 func (s *Store) SaveRules(ctx context.Context, c RuleSet) error {
+	tx, err := s.policyTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.saveRulesTx(ctx, tx, c); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Store) saveRulesTx(ctx context.Context, tx *sql.Tx, c RuleSet) error {
 	if c.Rules == nil {
 		c.Rules = []AccessRule{}
 	}
 	if len(c.Rules) > 100 || c.Version < 0 {
 		return fmt.Errorf("maximum 100 rules")
 	}
-	tx, e := s.DB.BeginTx(ctx, nil)
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
+	var e error
 	var source string
 	q := "SELECT a.source FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?"
 	if s.Driver == "pgx" {
@@ -205,7 +212,7 @@ func (s *Store) SaveRules(ctx context.Context, c RuleSet) error {
 	if _, e = tx.ExecContext(ctx, s.SQL("INSERT INTO access_rule_sets(policy_id,version,config) VALUES(?,?,?) ON CONFLICT(policy_id) DO UPDATE SET version=excluded.version,config=excluded.config"), c.PolicyID, c.Version, string(raw)); e != nil {
 		return e
 	}
-	return tx.Commit()
+	return nil
 }
 func matches(values []string, value string, fold bool) bool {
 	if len(values) == 0 {
