@@ -169,6 +169,8 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 	notifications := &notification.Service{Store: s, Vault: codes.Vault}
 	codes.Mail = notifications
 	guests.SenderForNAS = notifications.GuestSender
+	guests.SendEmail = notifications.GuestEmail
+	guests.SenderForContext = notifications.GuestSMSSender
 	portalURL := strings.TrimSuffix(m.PublicURL, "/") + "/portal/" + id
 	guests.PublicURL = portalURL
 	manager := &pki.Manager{Store: s, Vault: codes.Vault}

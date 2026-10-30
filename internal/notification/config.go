@@ -343,3 +343,40 @@ func (s *Service) GuestSender(ctx context.Context, nas string) (sms.SMSProvider,
 	}
 	return smsSender{s, user}, nil
 }
+
+// GuestEmail uses only trusted redirect/policy scope, never the email suffix.
+func (s *Service) GuestEmail(ctx context.Context, nas, domain, to, text string) error {
+	user := "local/guest"
+	if domain != "" {
+		if err := s.Store.ValidatePortalScope(ctx, "domain:"+domain); err != nil {
+			return err
+		}
+		user = domain + "/guest"
+	} else {
+		b, err := s.Store.BoundPolicy(ctx, nas)
+		if err != nil {
+			return err
+		}
+		if b != nil && b.Authentication.DomainID != "" {
+			user = b.Authentication.DomainID + "/guest"
+		}
+	}
+	return s.SendForIdentity(ctx, user, to, "Код доступа к Wi-Fi", text)
+}
+
+func (s *Service) GuestSMSSender(ctx context.Context, nas, domain string) (sms.SMSProvider, error) {
+	if domain == "" {
+		return s.GuestSender(ctx, nas)
+	}
+	if err := s.Store.ValidatePortalScope(ctx, "domain:"+domain); err != nil {
+		return nil, err
+	}
+	c, err := s.effective(ctx, domain)
+	if err != nil {
+		return nil, err
+	}
+	if c.SMS.Mode != "custom" {
+		return nil, fmt.Errorf("SMS disabled")
+	}
+	return smsSender{s, domain + "/guest"}, nil
+}

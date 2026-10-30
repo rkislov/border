@@ -100,6 +100,11 @@ func (s *Service) redirect(ctx context.Context, token string) (Redirect, error) 
 	if err != nil || !hmac.Equal(signature, proofMAC(secret, parts[0])) {
 		return Redirect{}, bad
 	}
+	if r.Domain != "" {
+		if err = s.Store.ValidatePortalScope(ctx, "domain:"+r.Domain); err != nil {
+			return Redirect{}, bad
+		}
+	}
 	return r, nil
 }
 

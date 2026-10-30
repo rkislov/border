@@ -199,6 +199,8 @@ func command() *cobra.Command {
 			}
 			codes.Mail = notifications
 			guests.SenderForNAS = notifications.GuestSender
+			guests.SendEmail = notifications.GuestEmail
+			guests.SenderForContext = notifications.GuestSMSSender
 			guests.PublicURL = strings.TrimSuffix(publicURL, "/") + "/portal/default"
 			guests.Reconnect = func(ctx context.Context, nas, id, mac string, vlan int) error {
 				var current store.Session

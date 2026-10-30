@@ -43,11 +43,18 @@ func (p *Portal) guestRoutes(mux *http.ServeMux) {
 			http.Error(w, "слишком много запросов; подождите 15 минут", 429)
 			return
 		}
-		var v struct{ Token, Phone string }
+		var v struct{ Token, Phone, Email, Channel string }
 		if !decode(w, r, &v) {
 			return
 		}
-		result, err := p.Guest.Request(r.Context(), v.Token, v.Phone)
+		if v.Channel == "" {
+			v.Channel = "sms"
+		}
+		contact := v.Phone
+		if v.Channel == "email" {
+			contact = v.Email
+		}
+		result, err := p.Guest.RequestContact(r.Context(), v.Token, v.Channel, contact)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return

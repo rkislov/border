@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	netmail "net/mail"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,21 +24,25 @@ import (
 )
 
 type Service struct {
-	PublicURL    string
-	Store        *store.Store
-	Vault        *auth.Vault
-	key          []byte
-	SMS          sms.SMSProvider
-	SenderForNAS func(context.Context, string) (sms.SMSProvider, error)
-	Reconnect    func(context.Context, string, string, string, int) error
-	mu           sync.Mutex
-	provider     *sms.HTTPProvider
-	fingerprint  [32]byte
+	SenderForContext func(context.Context, string, string) (sms.SMSProvider, error)
+	SendEmail        func(context.Context, string, string, string, string) error
+	PublicURL        string
+	Store            *store.Store
+	Vault            *auth.Vault
+	key              []byte
+	SMS              sms.SMSProvider
+	SenderForNAS     func(context.Context, string) (sms.SMSProvider, error)
+	Reconnect        func(context.Context, string, string, string, int) error
+	mu               sync.Mutex
+	provider         *sms.HTTPProvider
+	fingerprint      [32]byte
 }
 type Challenge struct {
-	ID          string
-	Expires     int64
-	MaskedPhone string
+	ID            string
+	Expires       int64
+	MaskedPhone   string
+	MaskedContact string
+	Channel       string
 }
 type Grant struct {
 	Expires           int64
@@ -170,25 +176,60 @@ func (s *Service) Cleanup(ctx context.Context) error {
 	return s.Store.Exec(ctx, "DELETE FROM guest_challenges WHERE created_at<?", now-3600)
 }
 func (s *Service) Request(ctx context.Context, token, rawPhone string) (Challenge, error) {
+	return s.RequestContact(ctx, token, "sms", rawPhone)
+}
+func (s *Service) RequestContact(ctx context.Context, token, channel, contact string) (Challenge, error) {
 	r, err := s.redirect(ctx, token)
 	if err != nil {
 		return Challenge{}, err
 	}
-	phone, err := sms.Phone(rawPhone)
+	design, err := s.Store.EffectivePortalDesign(ctx, r.NAS, r.Domain)
 	if err != nil {
 		return Challenge{}, err
 	}
-	var sender sms.SMSProvider
-	if s.SenderForNAS != nil {
-		sender, err = s.SenderForNAS(ctx, r.NAS)
+	mode := design.LoginMethod
+	if mode == "" {
+		mode = "sms"
+	}
+	if channel != "sms" && channel != "email" || mode != "both" && mode != channel {
+		return Challenge{}, fmt.Errorf("способ входа недоступен")
+	}
+	var phone string
+	var send func(context.Context, string, string) error
+	if channel == "email" {
+		contact = strings.TrimSpace(contact)
+		address, e := netmail.ParseAddress(contact)
+		if e != nil || address.Address != contact || len(contact) > 254 || strings.ContainsAny(contact, "\r\n") {
+			return Challenge{}, fmt.Errorf("неверный адрес электронной почты")
+		}
+		phone = contact
+		if s.SendEmail == nil {
+			return Challenge{}, fmt.Errorf("почтовый канал не настроен")
+		}
+		send = func(ctx context.Context, to, text string) error { return s.SendEmail(ctx, r.NAS, r.Domain, to, text) }
 	} else {
-		sender, err = s.sender(ctx)
-	}
-	if err != nil {
-		return Challenge{}, err
+		phone, err = sms.Phone(contact)
+		if err != nil {
+			return Challenge{}, err
+		}
+		var sender sms.SMSProvider
+		if s.SenderForContext != nil {
+			sender, err = s.SenderForContext(ctx, r.NAS, r.Domain)
+		} else if s.SenderForNAS != nil {
+			sender, err = s.SenderForNAS(ctx, r.NAS)
+		} else {
+			sender, err = s.sender(ctx)
+		}
+		if err != nil {
+			return Challenge{}, err
+		}
+		send = sender.Send
 	}
 	now := time.Now().Unix()
 	phoneHash := s.digest("phone", phone)
+	if channel == "email" {
+		phoneHash = s.digest("email", strings.ToLower(phone))
+	}
 	id := randomID()
 	number, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -228,19 +269,19 @@ func (s *Service) Request(ctx context.Context, token, rawPhone string) (Challeng
 		return Challenge{}, err
 	}
 	if total >= limit {
-		return Challenge{}, fmt.Errorf("часовой лимит SMS исчерпан")
+		return Challenge{}, fmt.Errorf("часовой лимит кодов исчерпан")
 	}
 	if err = tx.QueryRowContext(ctx, s.Store.SQL("SELECT COUNT(*) FROM guest_challenges WHERE phone_hash=? AND created_at>?"), phoneHash, now-900).Scan(&total); err != nil {
 		return Challenge{}, err
 	}
 	if total >= 5 {
-		return Challenge{}, fmt.Errorf("лимит номера: 5 SMS за 15 минут")
+		return Challenge{}, fmt.Errorf("лимит адресата: 5 кодов за 15 минут")
 	}
 	if err = tx.QueryRowContext(ctx, s.Store.SQL("SELECT COUNT(*) FROM guest_challenges WHERE nas=? AND mac=? AND created_at>?"), r.NAS, r.MAC, now-900).Scan(&total); err != nil {
 		return Challenge{}, err
 	}
 	if total >= 5 {
-		return Challenge{}, fmt.Errorf("лимит устройства: 5 SMS за 15 минут")
+		return Challenge{}, fmt.Errorf("лимит устройства: 5 кодов за 15 минут")
 	}
 	if err = tx.QueryRowContext(ctx, s.Store.SQL("SELECT COUNT(*) FROM guest_challenges WHERE nas=? AND mac=? AND created_at>?"), r.NAS, r.MAC, now-60).Scan(&total); err != nil {
 		return Challenge{}, err
@@ -257,15 +298,15 @@ func (s *Service) Request(ctx context.Context, token, rawPhone string) (Challeng
 	if err = tx.Commit(); err != nil {
 		return Challenge{}, err
 	}
-	if err = sender.Send(ctx, phone, "Border Wi-Fi code: "+code+". Valid for 5 minutes. Do not share."); err != nil {
+	if err = send(ctx, phone, "Border Wi-Fi code: "+code+". Valid for 5 minutes. Do not share."); err != nil {
 		_ = s.Store.Exec(ctx, "UPDATE guest_challenges SET code_digest='',attempts=5,expires_at=? WHERE id=?", now, id)
-		_ = s.Store.Audit(ctx, "guest", sms.Mask(phone)+"/"+r.MAC, "failed", "SMS delivery failed")
-		return Challenge{}, fmt.Errorf("SMS не отправлено; код аннулирован")
+		_ = s.Store.Audit(ctx, "guest", maskContact(phone)+"/"+r.MAC, "failed", channel+" delivery failed")
+		return Challenge{}, fmt.Errorf("сообщение не отправлено; код аннулирован")
 	}
-	if err = s.Store.Audit(ctx, "guest", sms.Mask(phone)+"/"+r.MAC, "sent", "SMS guest code issued"); err != nil {
-		return Challenge{}, fmt.Errorf("SMS отправлено, но аудит недоступен")
+	if err = s.Store.Audit(ctx, "guest", maskContact(phone)+"/"+r.MAC, "sent", channel+" guest code issued"); err != nil {
+		return Challenge{}, fmt.Errorf("сообщение отправлено, но аудит недоступен")
 	}
-	return Challenge{ID: id, Expires: now + 300, MaskedPhone: sms.Mask(phone)}, nil
+	return Challenge{ID: id, Expires: now + 300, MaskedPhone: maskContact(phone), MaskedContact: maskContact(phone), Channel: channel}, nil
 }
 func (s *Service) Confirm(ctx context.Context, id, code string) (Grant, error) {
 	if len(id) != 64 || len(code) != 6 {
@@ -317,7 +358,7 @@ func (s *Service) Confirm(ctx context.Context, id, code string) (Grant, error) {
 	if err != nil {
 		return Grant{}, fmt.Errorf("данные запроса недоступны")
 	}
-	masked := sms.Mask(string(plain))
+	masked := maskContact(string(plain))
 	clear(plain)
 	grant := Grant{Expires: now + int64(ttl), VLAN: int(vlan.Int64), ReconnectRequired: true}
 	if _, err = tx.ExecContext(ctx, s.Store.SQL("INSERT INTO guest_sessions(nas,mac,masked_phone,vlan,expires_at) VALUES (?,?,?,?,?) ON CONFLICT(nas,mac) DO UPDATE SET masked_phone=excluded.masked_phone,vlan=excluded.vlan,expires_at=excluded.expires_at"), nas, mac, masked, grant.VLAN, grant.Expires); err != nil {
@@ -329,11 +370,22 @@ func (s *Service) Confirm(ctx context.Context, id, code string) (Grant, error) {
 	if err = tx.Commit(); err != nil {
 		return Grant{}, err
 	}
-	if err = s.Store.Audit(ctx, "guest", masked+"/"+mac, "accepted", "SMS verified for NAS "+nas); err != nil {
+	if err = s.Store.Audit(ctx, "guest", masked+"/"+mac, "accepted", "guest code verified for NAS "+nas); err != nil {
 		return Grant{}, fmt.Errorf("доступ выдан, но аудит недоступен")
 	}
 	if s.Reconnect != nil && sessionID != "" {
 		grant.ReconnectRequired = s.Reconnect(ctx, nas, sessionID, mac, grant.VLAN) != nil
 	}
 	return grant, nil
+}
+
+func maskContact(value string) string {
+	if local, domain, ok := strings.Cut(value, "@"); ok {
+		r := []rune(local)
+		if len(r) == 0 {
+			return "***@" + domain
+		}
+		return string(r[0]) + "***@" + domain
+	}
+	return sms.Mask(value)
 }
