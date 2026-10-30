@@ -170,6 +170,7 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 	codes.Mail = notifications
 	guests.SenderForNAS = notifications.GuestSender
 	guests.SendEmail = notifications.GuestEmail
+	guests.AvailableChannels = notifications.GuestChannels
 	guests.SenderForContext = notifications.GuestSMSSender
 	portalURL := strings.TrimSuffix(m.PublicURL, "/") + "/portal/" + id
 	guests.PublicURL = portalURL

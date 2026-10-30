@@ -380,3 +380,39 @@ func (s *Service) GuestSMSSender(ctx context.Context, nas, domain string) (sms.S
 	}
 	return smsSender{s, domain + "/guest"}, nil
 }
+
+// GuestChannels validates local configuration only; it sends no messages.
+func (s *Service) GuestChannels(ctx context.Context, nas, domain string) ([]string, error) {
+	user := "local/guest"
+	if domain != "" {
+		if err := s.Store.ValidatePortalScope(ctx, "domain:"+domain); err != nil {
+			return nil, err
+		}
+		user = domain + "/guest"
+	} else {
+		b, err := s.Store.BoundPolicy(ctx, nas)
+		if err != nil {
+			return nil, err
+		}
+		if b != nil && b.Authentication.DomainID != "" {
+			user = b.Authentication.DomainID + "/guest"
+		}
+	}
+	c, err := s.effective(ctx, scope(user))
+	if err != nil {
+		return nil, err
+	}
+	channels := []string{}
+	if c.SMS.Mode == "custom" {
+		if provider, e := sms.New(c.SMS.Config); e == nil {
+			provider.Close()
+			channels = append(channels, "sms")
+		}
+	}
+	if c.SMTP.Mode == "custom" {
+		if _, e := smtpSender(c.SMTP); e == nil {
+			channels = append(channels, "email")
+		}
+	}
+	return channels, nil
+}

@@ -108,16 +108,62 @@ func (s *Service) redirect(ctx context.Context, token string) (Redirect, error) 
 	return r, nil
 }
 
-// Design resolves only verified redirect context in the current tenant store.
-func (s *Service) Design(ctx context.Context, token string) (store.PortalDesign, error) {
+type PublicDesign struct {
+	store.PortalDesign
+	Methods []string
+}
+
+// Design resolves verified scope and intersects enabled methods with configured channels.
+// SSO placeholders are never public authentication methods.
+func (s *Service) Design(ctx context.Context, token string) (PublicDesign, error) {
 	r, err := s.redirect(ctx, token)
 	if err != nil {
-		return store.PortalDesign{}, err
+		return PublicDesign{}, err
 	}
-	if r.Domain != "" {
-		if err = s.Store.ValidatePortalScope(ctx, "domain:"+r.Domain); err != nil {
-			return store.PortalDesign{}, err
+	d, err := s.Store.EffectivePortalDesign(ctx, r.NAS, r.Domain)
+	if err != nil {
+		return PublicDesign{}, err
+	}
+	out := PublicDesign{PortalDesign: d, Methods: []string{}}
+	policy, err := s.Store.GuestPolicy(ctx)
+	if err != nil {
+		return out, err
+	}
+	if !policy.Enabled {
+		return out, nil
+	}
+	channels := []string{}
+	if s.AvailableChannels != nil {
+		channels, err = s.AvailableChannels(ctx, r.NAS, r.Domain)
+		if err != nil {
+			return out, err
+		}
+	} else {
+		var e error
+		if s.SenderForContext != nil {
+			_, e = s.SenderForContext(ctx, r.NAS, r.Domain)
+		} else if s.SenderForNAS != nil {
+			_, e = s.SenderForNAS(ctx, r.NAS)
+		} else {
+			_, e = s.sender(ctx)
+		}
+		if e == nil {
+			channels = append(channels, "sms")
+		}
+		if s.SendEmail != nil {
+			channels = append(channels, "email")
 		}
 	}
-	return s.Store.EffectivePortalDesign(ctx, r.NAS, r.Domain)
+	for _, method := range []string{"sms", "email"} {
+		if d.LoginMethod != "both" && d.LoginMethod != method {
+			continue
+		}
+		for _, channel := range channels {
+			if method == channel {
+				out.Methods = append(out.Methods, method)
+				break
+			}
+		}
+	}
+	return out, nil
 }
