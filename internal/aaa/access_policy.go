@@ -31,6 +31,12 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 		valid = false
 	}
 	a := b.Authentication
+	if a.EAPMethod != "" {
+		if valid && b.Access.Mode == "network" && o.EAP != nil && o.Identities != nil && len(p.Attributes.Get(79)) > 0 {
+			return processTunneledEAP(ctx, s, p, host, b, o)
+		}
+		valid = false
+	}
 	if a.Source == "eap_tls" && valid && b.Access.Mode == "network" && o.EAP != nil && len(p.Attributes.Get(79)) > 0 {
 		return processEAP(ctx, s, p, host, o.EAP, b)
 	}

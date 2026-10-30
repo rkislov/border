@@ -23,6 +23,8 @@ const (
 	Failure    = 4
 	Identity   = 1
 	TLS        = 13
+	PEAP       = 25
+	TTLS       = 21
 	lengthFlag = 0x80
 	moreFlag   = 0x40
 	startFlag  = 0x20
@@ -32,12 +34,17 @@ const (
 type Authorization struct {
 	Identity string
 	VLAN     int
+	Groups   []string
 }
 type Reply struct {
 	Message, State, Key []byte
 	Accept, Reject      bool
 	Authorization       Authorization
 	Reason              string
+}
+type Tunnel struct {
+	Method       byte
+	Authenticate func(context.Context, *tls.Conn) (Authorization, error)
 }
 type Config struct {
 	TLSConfig                 func(context.Context) (*tls.Config, error)
@@ -57,6 +64,7 @@ type Engine struct {
 type session struct {
 	mu                 sync.Mutex
 	peer               string
+	tunnel             *Tunnel
 	token              []byte
 	expires            time.Time
 	config             *tls.Config
@@ -117,6 +125,10 @@ func (e *Engine) sweep() {
 				if s.cancel != nil {
 					s.cancel()
 				}
+				clear(s.last.Key)
+				if s.result != nil {
+					clear(s.result.key)
+				}
 				s.mu.Unlock()
 			}
 			e.mu.Unlock()
@@ -128,6 +140,10 @@ func (e *Engine) sweep() {
 					s.mu.Lock()
 					if s.cancel != nil {
 						s.cancel()
+					}
+					clear(s.last.Key)
+					if s.result != nil {
+						clear(s.result.key)
 					}
 					s.mu.Unlock()
 					delete(e.sessions, key)
@@ -165,9 +181,25 @@ func clone(r Reply) Reply {
 	r.Message = bytes.Clone(r.Message)
 	r.State = bytes.Clone(r.State)
 	r.Key = bytes.Clone(r.Key)
+	r.Authorization.Groups = append([]string(nil), r.Authorization.Groups...)
 	return r
 }
 func (e *Engine) Handle(ctx context.Context, peer string, state, message []byte) Reply {
+	return e.handle(ctx, peer, state, message, nil)
+}
+func (e *Engine) HandleTunnel(ctx context.Context, peer string, state, message []byte, t Tunnel) Reply {
+	if (t.Method != PEAP && t.Method != TTLS) || t.Authenticate == nil {
+		return failed(0, "invalid tunnel")
+	}
+	return e.handle(ctx, peer+string([]byte{t.Method}), state, message, &t)
+}
+func (s *session) method() byte {
+	if s.tunnel != nil {
+		return s.tunnel.Method
+	}
+	return TLS
+}
+func (e *Engine) handle(ctx context.Context, peer string, state, message []byte, tunnel *Tunnel) Reply {
 	e.mu.Lock()
 	if e.ctx.Err() != nil {
 		e.mu.Unlock()
@@ -187,7 +219,7 @@ func (e *Engine) Handle(ctx context.Context, peer string, state, message []byte)
 		if message[4] != Identity || len(message) > 1029 {
 			return failed(id, "EAP identity required")
 		}
-		return e.begin(ctx, peer, message)
+		return e.begin(ctx, peer, message, tunnel)
 	}
 	if len(state) != 32 {
 		return failed(id, "invalid EAP State")
@@ -208,7 +240,7 @@ func (e *Engine) Handle(ctx context.Context, peer string, state, message []byte)
 		return failed(id, "EAP session complete")
 	}
 	var reply Reply
-	if id != s.pendingID || message[4] != TLS || len(message) < 6 {
+	if id != s.pendingID || message[4] != s.method() || len(message) < 6 {
 		reply = failed(id, "unexpected EAP identifier or method")
 	} else {
 		reply = e.step(ctx, s, message)
@@ -224,7 +256,7 @@ func (e *Engine) Handle(ctx context.Context, peer string, state, message []byte)
 	s.hasLast = true
 	return reply
 }
-func (e *Engine) begin(ctx context.Context, peer string, message []byte) Reply {
+func (e *Engine) begin(ctx context.Context, peer string, message []byte, tunnel *Tunnel) Reply {
 	hash := sha256.Sum256(message)
 	e.mu.Lock()
 	if previous := e.initial[peer]; previous != nil && !previous.started.Load() && previous.initialHash == hash && time.Now().Before(previous.expires) {
@@ -245,14 +277,19 @@ func (e *Engine) begin(ctx context.Context, peer string, message []byte) Reply {
 	cfg.MinVersion = tls.VersionTLS12
 	cfg.MaxVersion = tls.VersionTLS12
 	cfg.ClientAuth = tls.RequireAndVerifyClientCert
+	if tunnel != nil {
+		cfg.ClientAuth = tls.NoClientCert
+		cfg.VerifyConnection = nil
+		cfg.VerifyPeerCertificate = nil
+	}
 	cfg.SessionTicketsDisabled = true
 	cfg.GetConfigForClient = nil
 	token := make([]byte, 32)
 	if _, err = rand.Read(token); err != nil {
 		return failed(message[1], "EAP state generation failed")
 	}
-	s := &session{peer: peer, token: token, expires: time.Now().Add(e.config.Timeout), config: cfg, pendingID: message[1] + 1, initialHash: hash}
-	s.start = Reply{Message: packet(Request, s.pendingID, TLS, startFlag, nil), State: bytes.Clone(token)}
+	s := &session{tunnel: tunnel, peer: peer, token: token, expires: time.Now().Add(e.config.Timeout), config: cfg, pendingID: message[1] + 1, initialHash: hash}
+	s.start = Reply{Message: packet(Request, s.pendingID, s.method(), startFlag, nil), State: bytes.Clone(token)}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if len(e.sessions) >= e.config.MaxSessions || e.ctx.Err() != nil {
@@ -264,7 +301,7 @@ func (e *Engine) begin(ctx context.Context, peer string, message []byte) Reply {
 }
 func (e *Engine) challenge(s *session, flags byte, data []byte) Reply {
 	s.pendingID++
-	return Reply{Message: packet(Request, s.pendingID, TLS, flags, data), State: bytes.Clone(s.token)}
+	return Reply{Message: packet(Request, s.pendingID, s.method(), flags, data), State: bytes.Clone(s.token)}
 }
 func (e *Engine) output(s *session) Reply {
 	offset := s.outOffset
@@ -309,7 +346,12 @@ func (e *Engine) step(ctx context.Context, s *session, message []byte) Reply {
 		if flags != 0 || len(data) != 0 {
 			return failed(id, "final TLS acknowledgement required")
 		}
-		authorization, err := e.config.Authorize(ctx, s.result.state)
+		authorization, err := s.result.authorization, error(nil)
+		if s.tunnel == nil {
+			authorization, err = e.config.Authorize(ctx, s.result.state)
+		} else {
+			_, err = e.config.TLSConfig(ctx)
+		}
 		if err != nil || authorization.Identity == "" {
 			return failed(id, "certificate authorization denied")
 		}
@@ -317,14 +359,14 @@ func (e *Engine) step(ctx context.Context, s *session, message []byte) Reply {
 		if s.cancel != nil {
 			s.cancel()
 		}
-		return Reply{Message: packet(Success, id, 0, 0, nil), Accept: true, Key: bytes.Clone(s.result.key), Authorization: authorization, Reason: "EAP-TLS certificate"}
+		return Reply{Message: packet(Success, id, 0, 0, nil), Accept: true, Key: bytes.Clone(s.result.key), Authorization: authorization, Reason: "EAP authentication"}
 	}
 	if flags&lengthFlag != 0 {
-		if len(data) < 4 || s.expectedLength != 0 {
+		if len(data) < 4 || (s.expectedLength != 0 && s.method() != PEAP) {
 			return failed(id, "invalid TLS fragment length")
 		}
 		total := binary.BigEndian.Uint32(data[:4])
-		if total == 0 || total > maxFlight {
+		if total == 0 || total > maxFlight || (s.expectedLength != 0 && int(total) != s.expectedLength) {
 			return failed(id, "TLS flight exceeds limit")
 		}
 		s.expectedLength = int(total)
@@ -364,7 +406,14 @@ func (e *Engine) step(ctx context.Context, s *session, message []byte) Reply {
 			result := &tlsResult{err: err}
 			if err == nil {
 				result.state = conn.ConnectionState()
-				result.key, result.err = result.state.ExportKeyingMaterial("client EAP encryption", nil, 128)
+				label := "client EAP encryption"
+				if s.tunnel != nil && s.tunnel.Method == TTLS {
+					label = "ttls keying material"
+				}
+				result.key, result.err = result.state.ExportKeyingMaterial(label, nil, 128)
+				if result.err == nil && s.tunnel != nil {
+					result.authorization, result.err = s.tunnel.Authenticate(sessionCtx, conn)
+				}
 			}
 			_ = s.conn.emit(flightEvent{result: result})
 		}()
@@ -398,11 +447,26 @@ func (e *Engine) step(ctx context.Context, s *session, message []byte) Reply {
 			output = append(output, event.data...)
 			if event.result != nil {
 				if event.result.err != nil {
+					clear(event.result.key)
 					return failed(id, "TLS handshake failed")
 				}
 				s.result = event.result
 			}
 			if event.read || event.result != nil {
+				if len(output) == 0 && s.result != nil && s.tunnel != nil {
+					s.finished = true
+					if _, err := e.config.TLSConfig(ctx); err != nil {
+						return failed(id, "EAP disabled")
+					}
+					if s.result.authorization.Identity == "" {
+						return failed(id, "inner authentication rejected")
+					}
+					s.cancel()
+					return Reply{Message: packet(Success, id, 0, 0, nil), Accept: true, Key: bytes.Clone(s.result.key), Authorization: s.result.authorization, Reason: "tunneled EAP"}
+				}
+				if len(output) == 0 && event.read && s.tunnel != nil {
+					return e.challenge(s, 0, nil)
+				}
 				if len(output) == 0 {
 					return failed(id, "TLS produced no response")
 				}

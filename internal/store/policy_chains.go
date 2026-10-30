@@ -23,6 +23,17 @@ func (a AuthenticationPolicy) Chain() []string {
 	return out
 }
 func (a AuthenticationPolicy) ValidateChain() error {
+	if a.EAPMethod != "" {
+		if (a.EAPMethod != "peap" && a.EAPMethod != "ttls") || (a.Source != "local" && a.Source != "directory") {
+			return fmt.Errorf("tunneled EAP requires local or directory source")
+		}
+		for _, step := range a.Chain() {
+			if step != "primary" && step != "device" {
+				return fmt.Errorf("tunneled EAP currently supports primary and device checks only")
+			}
+		}
+	}
+
 	seen := map[string]bool{}
 	for _, step := range a.Chain() {
 		if seen[step] {
@@ -112,8 +123,8 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 		if b.IdentitySource != "" && b.Protocol != "pap" && b.Protocol != "mschapv2" && b.Protocol != "eap" {
 			return fmt.Errorf("domain selector requires password authentication")
 		}
-		var source, mode string
-		if err := s.Row(ctx, "SELECT a.source,p.mode FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", b.PolicyID).Scan(&source, &mode); err != nil {
+		var source, mode, method string
+		if err := s.Row(ctx, "SELECT a.source,p.mode,a.eap_method FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", b.PolicyID).Scan(&source, &mode, &method); err != nil {
 			return fmt.Errorf("unknown access policy")
 		}
 		expected := "pap"
@@ -128,6 +139,12 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 		}
 		if b.Protocol == "eap" && mode == "vpn" && (source == "local" || source == "directory") {
 			expected = "eap"
+		}
+		if method != "" {
+			expected = "eap"
+			if mode != "network" {
+				return fmt.Errorf("tunneled EAP requires network policy")
+			}
 		}
 		if expected != b.Protocol {
 			return fmt.Errorf("protocol does not match authentication source")
@@ -203,7 +220,7 @@ func (s *Store) selectPolicy(ctx context.Context, nas string, request PolicyRequ
 		if p.Authentication.Source == "mab" {
 			expected = "mab"
 		}
-		if p.Authentication.Source == "eap_tls" {
+		if p.Authentication.Source == "eap_tls" || p.Authentication.EAPMethod != "" {
 			expected = "eap"
 		}
 		if b.Protocol == "mschapv2" && (p.Authentication.Source == "local" || p.Authentication.Source == "directory") {
@@ -211,6 +228,12 @@ func (s *Store) selectPolicy(ctx context.Context, nas string, request PolicyRequ
 		}
 		if b.Protocol == "eap" && p.Access.Mode == "vpn" && (p.Authentication.Source == "local" || p.Authentication.Source == "directory") {
 			expected = "eap"
+		}
+		if p.Authentication.EAPMethod != "" {
+			expected = "eap"
+			if p.Access.Mode != "network" {
+				return nil, true, fmt.Errorf("tunneled EAP requires network policy")
+			}
 		}
 		if expected != b.Protocol {
 			return nil, true, fmt.Errorf("binding protocol no longer matches authentication source")
