@@ -45,3 +45,5 @@ main.operations{margin:0 auto;width:100%;max-width:1400px;padding:32px 24px}.ope
  .menu-open .menu-backdrop{opacity:1;visibility:visible}.menu-modal{overflow:hidden}
 }
 @media(prefers-reduced-motion:reduce){.menu-ready>aside,.menu-ready>main,.menu-toggle span,.menu-backdrop,nav .nav-group>summary::after{transition:none}}
+
+#change-journal .panel{overflow-wrap:anywhere}#change-journal button:not(.primary){padding:9px 14px;border-radius:6px;background:#e7eee9;color:#234f3d}#change-detail{scroll-margin-top:20px}#change-detail details{margin:20px 0}

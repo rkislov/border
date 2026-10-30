@@ -184,7 +184,7 @@ func (a *app) policyDraftRoutes(m *http.ServeMux) {
 			case "publish":
 				err = a.s.PublishPolicyDraft(r.Context(), v.Kind, v.PolicyID, v.Revision, actor)
 			case "discard":
-				err = a.s.DiscardPolicyDraft(r.Context(), v.Kind, v.PolicyID, v.Revision)
+				err = a.s.DiscardPolicyDraft(r.Context(), v.Kind, v.PolicyID, v.Revision, actor)
 			case "rollback":
 				err = a.s.RollbackPolicyDraft(r.Context(), v.ReleaseID, actor)
 			}

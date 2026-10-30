@@ -411,6 +411,10 @@ func (s *Store) publishPolicyBatchTx(ctx context.Context, tx *sql.Tx, refs []Dra
 	if e != nil {
 		return e
 	}
+	beforeDevices, e := s.journalDevices(ctx, tx)
+	if e != nil {
+		return e
+	}
 	t := newTargets()
 	after, e := s.applyBatch(ctx, tx, ds, t)
 	if e != nil {
@@ -437,12 +441,15 @@ func (s *Store) publishPolicyBatchTx(ctx context.Context, tx *sql.Tx, refs []Dra
 	if e != nil {
 		return e
 	}
+	batch := uuid.NewString()
+	if e = s.journalPublication(ctx, tx, actor, batch, reviewID, ds, after, t, beforeDevices, len(tokens)); e != nil {
+		return e
+	}
 	for _, token := range tokens {
 		if _, e = tx.ExecContext(ctx, s.SQL("UPDATE access_grants SET reason='configuration published: reauthentication required',next_attempt=0 WHERE token=? AND reason=''"), token); e != nil {
 			return e
 		}
 	}
-	batch := uuid.NewString()
 	if reviewID != "" {
 		if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_reviews SET state='published',batch_id=?,updated_at=? WHERE id=?"), batch, time.Now().Unix(), reviewID); e != nil {
 			return e
@@ -456,6 +463,9 @@ func (s *Store) publishPolicyBatchTx(ctx context.Context, tx *sql.Tx, refs []Dra
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM policy_draft_authors WHERE kind=? AND policy_id=?"), d.Kind, d.PolicyID); e != nil {
+			return e
+		}
+		if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM draft_journal_cycles WHERE kind=? AND policy_id=?"), d.Kind, d.PolicyID); e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM policy_drafts WHERE kind=? AND policy_id=?"), d.Kind, d.PolicyID); e != nil {
@@ -504,6 +514,17 @@ func (s *Store) RollbackPolicyBatch(ctx context.Context, batch, actor string) er
 		if e = s.savePolicyDraftTx(ctx, tx, d, actor); e != nil {
 			return e
 		}
+	}
+	refs := []DraftRef{}
+	for _, d := range ds {
+		current, e := draftTx(ctx, s, tx, d.Kind, d.PolicyID)
+		if e != nil {
+			return e
+		}
+		refs = append(refs, DraftRef{d.Kind, d.PolicyID, current.Revision})
+	}
+	if e = s.appendChange(ctx, tx, ChangeEvent{Action: "rollback_prepared", Actor: actor, BatchID: batch, Summary: "Подготовлены черновики отката"}, refs, nil); e != nil {
+		return e
 	}
 	return tx.Commit()
 }
