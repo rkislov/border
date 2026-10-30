@@ -12,6 +12,10 @@ import (
 )
 
 type PortalDesign struct {
+	SSOEnabled                                     bool
+	SSOPosition                                    string
+	SSOProviders                                   []string
+	LoginMethod                                    string
 	Custom                                         bool
 	Title, Description, RequestLabel, ConfirmLabel string
 	Position, ButtonAlign, ButtonPosition          string
@@ -19,7 +23,7 @@ type PortalDesign struct {
 }
 
 func DefaultPortalDesign() PortalDesign {
-	return PortalDesign{Title: "Подключение к сети", Description: "Получите SMS-код для доступа к сети", RequestLabel: "Получить SMS-код", ConfirmLabel: "Подключиться", Position: "center", ButtonAlign: "stretch", ButtonPosition: "bottom"}
+	return PortalDesign{LoginMethod: "sms", SSOPosition: "bottom", Title: "Подключение к сети", Description: "Получите код для доступа к сети", RequestLabel: "Получить код", ConfirmLabel: "Подключиться", Position: "center", ButtonAlign: "stretch", ButtonPosition: "bottom"}
 }
 func (s *Store) ValidatePortalScope(ctx context.Context, scope string) error {
 	if scope == "tenant" {
@@ -58,6 +62,28 @@ func (s *Store) PortalDesign(ctx context.Context, scope string) (PortalDesign, e
 	return d, err
 }
 func (s *Store) SavePortalDesign(ctx context.Context, scope string, d PortalDesign) error {
+	if d.SSOPosition == "" {
+		d.SSOPosition = "bottom"
+	}
+	if d.SSOPosition != "top" && d.SSOPosition != "bottom" {
+		return fmt.Errorf("invalid SSO position")
+	}
+	providers := map[string]bool{"yandex": true, "gosuslugi": true, "google": true, "apple": true, "vk": true, "oidc": true}
+	if len(d.SSOProviders) > 6 {
+		return fmt.Errorf("too many SSO placeholders")
+	}
+	for _, id := range d.SSOProviders {
+		if !providers[id] {
+			return fmt.Errorf("invalid or duplicate SSO provider")
+		}
+		providers[id] = false
+	}
+	if d.LoginMethod == "" {
+		d.LoginMethod = "sms"
+	}
+	if d.LoginMethod != "sms" && d.LoginMethod != "email" && d.LoginMethod != "both" {
+		return fmt.Errorf("invalid portal login method")
+	}
 	if err := s.ValidatePortalScope(ctx, scope); err != nil {
 		return err
 	}

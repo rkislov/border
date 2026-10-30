@@ -64,10 +64,8 @@ func (a *app) guestRoutes(mux *http.ServeMux) {
 		if !decode(w, r, &p) {
 			return
 		}
-		if p.Enabled && !a.guest.Ready(r.Context()) {
-			http.Error(w, "configure SMS provider first", 400)
-			return
-		}
+		// Channel availability is scoped to NAS/domain and checked when issuing a code.
+
 		a.finish(w, r, a.s.SetGuestPolicy(r.Context(), p), "save guest policy")
 	})
 	mux.HandleFunc("POST /api/guest/revoke", func(w http.ResponseWriter, r *http.Request) {

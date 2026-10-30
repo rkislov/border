@@ -46,3 +46,31 @@ func TestPortalDesignInheritanceAndIsolation(t *testing.T) {
 		t.Fatal("invalid layout accepted")
 	}
 }
+
+func TestPortalChannelsAndSSOPlaceholders(t *testing.T) {
+	s := ruleStore(t)
+	d := DefaultPortalDesign()
+	d.Custom = true
+	d.LoginMethod = "both"
+	d.SSOEnabled = true
+	d.SSOPosition = "top"
+	d.SSOProviders = []string{"yandex", "gosuslugi", "google", "apple", "vk", "oidc"}
+	if err := s.SavePortalDesign(t.Context(), "tenant", d); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.PortalDesign(t.Context(), "tenant")
+	if err != nil || got.LoginMethod != "both" || !got.SSOEnabled || len(got.SSOProviders) != 6 {
+		t.Fatal(got, err)
+	}
+	for _, ids := range [][]string{{"google", "google"}, {"javascript:alert(1)"}} {
+		d.SSOProviders = ids
+		if s.SavePortalDesign(t.Context(), "tenant", d) == nil {
+			t.Fatal("invalid SSO accepted")
+		}
+	}
+	d.SSOProviders = nil
+	d.LoginMethod = "password"
+	if s.SavePortalDesign(t.Context(), "tenant", d) == nil {
+		t.Fatal("unknown login accepted")
+	}
+}
