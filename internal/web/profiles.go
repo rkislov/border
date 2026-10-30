@@ -6,7 +6,19 @@ import (
 )
 
 func (a *app) profileRoutes(m *http.ServeMux) {
-	m.HandleFunc("GET /api/dictionaries", func(w http.ResponseWriter, r *http.Request) { reply(w, radprofile.Catalog) })
+	m.HandleFunc("GET /api/nas/compatibility", a.nasCompatibility)
+	m.HandleFunc("GET /api/dictionaries", func(w http.ResponseWriter, r *http.Request) {
+		type entry struct {
+			radprofile.Profile
+			Capabilities radprofile.Capabilities
+		}
+		result := []entry{}
+		for _, p := range radprofile.Catalog {
+			c, _ := radprofile.Describe(p.ID)
+			result = append(result, entry{p, c})
+		}
+		reply(w, result)
+	})
 	m.HandleFunc("GET /api/nas/grants", func(w http.ResponseWriter, r *http.Request) {
 		g, err := a.s.NASGrants(r.Context())
 		if err != nil {
