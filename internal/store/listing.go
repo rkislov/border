@@ -9,6 +9,7 @@ import (
 )
 
 type ListFilter struct {
+	LocationID                           string // Internal authorization constraint; never read from query parameters.
 	Query, Status, Result, Authorization string
 	From, Until                          int64
 	Page, Limit                          int
@@ -108,6 +109,10 @@ func (s *Store) SessionsPage(ctx context.Context, f ListFilter) (ListPage[Sessio
 		return page, err
 	}
 	where, args := listWhere(f, true)
+	if f.LocationID != "" {
+		where += " AND EXISTS (SELECT 1 FROM nas n WHERE n.address=s.nas AND n.location_id=?)"
+		args = append(args, f.LocationID)
+	}
 	if err := s.Row(ctx, "SELECT COUNT(*) FROM sessions s WHERE "+where, args...).Scan(&page.Total); err != nil {
 		return page, err
 	}

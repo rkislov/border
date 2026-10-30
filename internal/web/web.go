@@ -3,6 +3,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
@@ -42,7 +43,7 @@ type app struct {
 	platform      Platform
 	notifications *notification.Service
 	mu            sync.Mutex
-	sessions      map[string]time.Time
+	sessions      map[string]adminSession
 	attempts      map[string]loginAttempt
 	s             *store.Store
 	csrf          string
@@ -68,7 +69,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
-	a := &app{sessions: make(map[string]time.Time), attempts: make(map[string]loginAttempt), pki: manager, acme: acme, s: s, csrf: hex.EncodeToString(b), t: template.Must(template.ParseFS(assets, "assets/index.html")), slots: make(chan struct{}, 16)}
+	a := &app{sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt), pki: manager, acme: acme, s: s, csrf: hex.EncodeToString(b), t: template.Must(template.ParseFS(assets, "assets/index.html")), slots: make(chan struct{}, 16)}
 	if len(guests) > 0 {
 		a.guest = guests[0]
 	}
@@ -82,6 +83,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	a.platform = platform
 	a.notifications = &notification.Service{Store: s, Vault: vault}
 	mux := http.NewServeMux()
+	a.roleRoutes(mux)
 	a.listRoutes(mux)
 	a.healthRoutes(mux)
 	a.tenantRoutes(mux)
@@ -143,7 +145,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 			mux.ServeHTTP(w, r)
 			return
 		}
-		authenticated := a.authenticated(r)
+		principal, authenticated := a.principal(r)
 		if !authenticated {
 			if r.URL.Path == "/" && r.Method == "GET" {
 				b, _ := assets.ReadFile("assets/login.html")
@@ -155,6 +157,17 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 			return
 		}
 
+		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, principal))
+		if !a.roleAllowed(principal, r) {
+			http.Error(w, "insufficient permissions", 403)
+			return
+		}
+		if r.URL.Path == "/" && principal.Role != "admin" {
+			page, _ := assets.ReadFile("assets/operations.html")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(strings.ReplaceAll(string(page), "CSRF_PLACEHOLDER", a.csrf)))
+			return
+		}
 		limit := int64(16384)
 		if r.URL.Path == "/api/portal-design/background" {
 			limit = 2 << 20
@@ -192,7 +205,7 @@ func (a *app) finish(w http.ResponseWriter, r *http.Request, err error, action s
 		http.Error(w, "операция отклонена: проверьте уникальность и ссылки на VLAN", 400)
 		return
 	}
-	if err = a.s.Audit(r.Context(), "web", "admin", "updated", action); err != nil {
+	if err = a.s.Audit(r.Context(), "web", requestAccount(r).Username, "updated", action); err != nil {
 		slog.Error("admin audit failed")
 	}
 	reply(w, map[string]bool{"ok": true})

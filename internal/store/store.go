@@ -157,7 +157,7 @@ func (s *Store) Admin(ctx context.Context, name, password string, reset bool) er
 		return err
 	}
 	if reset {
-		r, err := s.DB.ExecContext(ctx, s.query("UPDATE admins SET password_hash=? WHERE username=?"), string(hash), name)
+		r, err := s.DB.ExecContext(ctx, s.query("UPDATE admins SET password_hash=?,revision=revision+1 WHERE username=?"), string(hash), name)
 		if err != nil {
 			return err
 		}
@@ -174,7 +174,7 @@ func (s *Store) Admin(ctx context.Context, name, password string, reset bool) er
 }
 func (s *Store) CheckAdmin(ctx context.Context, name, password string) bool {
 	var hash string
-	err := s.Row(ctx, "SELECT password_hash FROM admins WHERE username=?", name).Scan(&hash)
+	err := s.Row(ctx, "SELECT password_hash FROM admins WHERE username=? AND enabled=1", name).Scan(&hash)
 	if err != nil {
 		return false
 	}

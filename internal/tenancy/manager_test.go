@@ -100,6 +100,23 @@ func TestIsolationRestartRoutingAndCookieScope(t *testing.T) {
 	if w.Code != 401 {
 		t.Fatal("cross tenant cookie", w.Code)
 	}
+
+	if e = a.Store.SaveAdminAccount(ctx, "admin", store.AdminChange{Username: "alpha-viewer", Password: "viewer-password-123", Role: "viewer", Enabled: true}); e != nil {
+		t.Fatal(e)
+	}
+	for _, tc := range []struct {
+		path string
+		code int
+	}{{"/t/alpha/api/sessions", 200}, {"/t/alpha/api/admins", 403}, {"/t/bravo/api/sessions", 401}} {
+		request = httptest.NewRequest("GET", "https://border.example.test"+tc.path, nil)
+		request.SetBasicAuth("alpha-viewer", "viewer-password-123")
+		request.TLS = &tls.ConnectionState{}
+		w = httptest.NewRecorder()
+		h.ServeHTTP(w, request)
+		if w.Code != tc.code {
+			t.Fatalf("role tenant boundary %s: %d", tc.path, w.Code)
+		}
+	}
 	m.Close()
 	m.Key = bytes.Repeat([]byte{42}, 32)
 	if e = m.Init(ctx); e != nil {
