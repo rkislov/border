@@ -16,6 +16,7 @@ type healthSnapshot struct {
 	DatabaseOK                                        bool
 	DatabaseSeconds                                   float64
 	ActiveSessions, StaleSessions, PendingRevocations int64
+	UnlinkedSessions                                  int64
 }
 
 func (a *app) health(ctx context.Context) healthSnapshot {
@@ -23,7 +24,7 @@ func (a *app) health(ctx context.Context) healthSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	start := time.Now()
-	err := a.s.Row(ctx, `SELECT (SELECT COUNT(*) FROM sessions WHERE status='active'), (SELECT COUNT(*) FROM sessions WHERE status='stale'), (SELECT COUNT(*) FROM sessions s JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas WHERE s.status IN ('active','stale') AND g.reason<>'')`).Scan(&h.ActiveSessions, &h.StaleSessions, &h.PendingRevocations)
+	err := a.s.Row(ctx, `SELECT (SELECT COUNT(*) FROM sessions WHERE status='active'), (SELECT COUNT(*) FROM sessions WHERE status='stale'), (SELECT COUNT(*) FROM sessions s JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas WHERE s.status IN ('active','stale') AND g.reason<>''), (SELECT COUNT(*) FROM sessions s WHERE s.status IN ('active','stale') AND NOT EXISTS(SELECT 1 FROM access_grants g WHERE g.token=s.grant_token AND g.nas=s.nas))`).Scan(&h.ActiveSessions, &h.StaleSessions, &h.PendingRevocations, &h.UnlinkedSessions)
 	h.DatabaseSeconds = time.Since(start).Seconds()
 	h.DatabaseOK = err == nil
 	return h
@@ -56,6 +57,7 @@ func (a *app) healthRoutes(m *http.ServeMux) {
 			gauge("active_sessions", h.ActiveSessions)
 			gauge("stale_sessions", h.StaleSessions)
 			gauge("pending_revocations", h.PendingRevocations)
+			gauge("unlinked_sessions", h.UnlinkedSessions)
 		}
 		for _, family := range []struct{ name, kind string }{{"operations_total", "counter"}, {"failures_total", "counter"}, {"operation_duration_seconds_sum", "counter"}, {"operation_duration_seconds_count", "counter"}, {"operation_duration_seconds_max", "gauge"}, {"last_operation_seconds", "gauge"}, {"results_total", "counter"}} {
 			fmt.Fprintf(w, "# TYPE border_%s %s\n", family.name, family.kind)

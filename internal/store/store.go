@@ -56,6 +56,8 @@ type Session struct {
 	NAS, ID, MAC, Username, Status                  string
 	Updated                                         int64
 	GrantToken                                      string `json:"-"`
+	AuthorizationLinked                             bool
+	AccessPolicyID                                  string
 	RevocationReason                                string
 	RevocationAttempts                              int
 	Generation                                      string

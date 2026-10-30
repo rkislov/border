@@ -14,7 +14,7 @@ func (a *app) listRoutes(m *http.ServeMux) {
 	for _, kind := range []string{"sessions", "events"} {
 		m.HandleFunc("GET /api/"+kind, func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
-			f := store.ListFilter{Query: q.Get("q"), Status: q.Get("status"), Result: q.Get("result"), Page: 1, Limit: 50}
+			f := store.ListFilter{Query: q.Get("q"), Status: q.Get("status"), Result: q.Get("result"), Authorization: q.Get("authorization"), Page: 1, Limit: 50}
 			for key, dst := range map[string]*int{"page": &f.Page, "limit": &f.Limit} {
 				if q.Has(key) {
 					n, e := strconv.Atoi(q.Get(key))
