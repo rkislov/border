@@ -40,14 +40,21 @@ type AccessContext struct {
 var ruleID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 func (s *Store) SaveUserGroup(ctx context.Context, g UserGroup) error {
-	if !ruleID.MatchString(g.ID) || g.Name == "" || len(g.Name) > 100 || len(g.Members) > 1000 {
-		return fmt.Errorf("invalid group")
-	}
-	tx, e := s.DB.BeginTx(ctx, nil)
+	tx, e := s.policyTx(ctx)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback()
+	if e = s.saveGroupTx(ctx, tx, g); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+func (s *Store) saveGroupTx(ctx context.Context, tx *sql.Tx, g UserGroup) error {
+	if !ruleID.MatchString(g.ID) || g.Name == "" || len(g.Name) > 100 || len(g.Members) > 1000 {
+		return fmt.Errorf("invalid group")
+	}
+	var e error
 	if _, e = tx.ExecContext(ctx, s.SQL("INSERT INTO user_groups(id,name,enabled) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled"), g.ID, g.Name, integer(g.Enabled)); e != nil {
 		return e
 	}
@@ -64,7 +71,7 @@ func (s *Store) SaveUserGroup(ctx context.Context, g UserGroup) error {
 			return e
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 func (s *Store) UserGroups(ctx context.Context) ([]UserGroup, error) {
 	rows, e := s.DB.QueryContext(ctx, "SELECT g.id,g.name,g.enabled,m.username FROM user_groups g LEFT JOIN user_group_members m ON m.group_id=g.id ORDER BY g.name,g.id,m.username")

@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"strings"
 	"time"
 )
@@ -20,9 +19,9 @@ type PolicyDraft struct {
 	UpdatedAt      int64
 }
 type PolicyRelease struct {
-	ID, Kind, PolicyID, Actor string
-	CreatedAt                 int64
-	Before, After             json.RawMessage
+	ID, Kind, PolicyID, Actor, BatchID string
+	CreatedAt                          int64
+	Before, After                      json.RawMessage
 }
 type PolicyImpact struct {
 	Draft            PolicyDraft
@@ -102,7 +101,7 @@ func (s *Store) policySnapshot(ctx context.Context, tx *sql.Tx, kind, id string)
 		c.Version = version
 		return policyJSON(c), nil
 	default:
-		return nil, fmt.Errorf("unknown policy kind")
+		return s.objectSnapshot(ctx, tx, kind, id)
 	}
 }
 func (s *Store) applyPolicy(ctx context.Context, tx *sql.Tx, kind, id string, raw json.RawMessage) error {
@@ -138,7 +137,7 @@ func (s *Store) applyPolicy(ctx context.Context, tx *sql.Tx, kind, id string, ra
 		}
 		return s.saveRulesTx(ctx, tx, v)
 	}
-	return fmt.Errorf("unknown policy kind")
+	return s.applyObject(ctx, tx, kind, id, raw)
 }
 func draftTx(ctx context.Context, s *Store, tx *sql.Tx, kind, id string) (PolicyDraft, error) {
 	d := PolicyDraft{Kind: kind, PolicyID: id}
@@ -154,10 +153,13 @@ func (s *Store) SavePolicyDraft(ctx context.Context, d PolicyDraft, actor string
 		return e
 	}
 	defer tx.Rollback()
-	return s.savePolicyDraftTx(ctx, tx, d, actor)
+	if e = s.savePolicyDraftTx(ctx, tx, d, actor); e != nil {
+		return e
+	}
+	return tx.Commit()
 }
 func (s *Store) savePolicyDraftTx(ctx context.Context, tx *sql.Tx, d PolicyDraft, actor string) error {
-	if !ruleID.MatchString(d.PolicyID) || len(d.Payload) > 256*1024 {
+	if len(d.Payload) > 256*1024 {
 		return fmt.Errorf("invalid policy draft")
 	}
 	current, e := draftTx(ctx, s, tx, d.Kind, d.PolicyID)
@@ -174,27 +176,8 @@ func (s *Store) savePolicyDraftTx(ctx context.Context, tx *sql.Tx, d PolicyDraft
 	if current.Revision > 0 {
 		base = current.Base
 	}
-	// Reuse production validation inside a savepoint; no live change can escape.
-	if _, e = tx.ExecContext(ctx, "SAVEPOINT validate_policy"); e != nil {
-		return e
-	}
-	if e = s.applyPolicy(ctx, tx, d.Kind, d.PolicyID, d.Payload); e != nil {
-		return e
-	}
-	canonical, e := s.policySnapshot(ctx, tx, d.Kind, d.PolicyID)
+	canonical, e := draftPayload(d.Kind, d.PolicyID, d.Payload)
 	if e != nil {
-		return e
-	}
-	if d.Kind == "rules" {
-		var c RuleSet
-		json.Unmarshal(canonical, &c)
-		c.Version--
-		canonical = policyJSON(c)
-	}
-	if _, e = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT validate_policy"); e != nil {
-		return e
-	}
-	if _, e = tx.ExecContext(ctx, "RELEASE SAVEPOINT validate_policy"); e != nil {
 		return e
 	}
 	if _, e = tx.ExecContext(ctx, s.SQL("INSERT INTO policy_draft_versions(kind,policy_id,revision) VALUES(?,?,1) ON CONFLICT(kind,policy_id) DO UPDATE SET revision=policy_draft_versions.revision+1"), d.Kind, d.PolicyID); e != nil {
@@ -208,7 +191,7 @@ func (s *Store) savePolicyDraftTx(ctx context.Context, tx *sql.Tx, d PolicyDraft
 	if e != nil {
 		return e
 	}
-	return tx.Commit()
+	return nil
 }
 func (s *Store) PolicyDrafts(ctx context.Context) ([]PolicyDraft, error) {
 	rows, e := s.DB.QueryContext(ctx, "SELECT kind,policy_id,revision,base,payload,actor,updated_at FROM policy_drafts ORDER BY updated_at DESC,kind,policy_id")
@@ -230,7 +213,7 @@ func (s *Store) PolicyDrafts(ctx context.Context) ([]PolicyDraft, error) {
 	return out, rows.Err()
 }
 func (s *Store) PolicyReleases(ctx context.Context) ([]PolicyRelease, error) {
-	rows, e := s.DB.QueryContext(ctx, "SELECT id,kind,policy_id,actor,created_at,before_payload,after_payload FROM policy_releases ORDER BY created_at DESC,id DESC LIMIT 100")
+	rows, e := s.DB.QueryContext(ctx, "SELECT id,kind,policy_id,actor,created_at,before_payload,after_payload,batch_id FROM policy_releases ORDER BY created_at DESC,id DESC LIMIT 100")
 	if e != nil {
 		return nil, e
 	}
@@ -239,7 +222,7 @@ func (s *Store) PolicyReleases(ctx context.Context) ([]PolicyRelease, error) {
 	for rows.Next() {
 		var r PolicyRelease
 		var b, p string
-		if e = rows.Scan(&r.ID, &r.Kind, &r.PolicyID, &r.Actor, &r.CreatedAt, &b, &p); e != nil {
+		if e = rows.Scan(&r.ID, &r.Kind, &r.PolicyID, &r.Actor, &r.CreatedAt, &b, &p, &r.BatchID); e != nil {
 			return nil, e
 		}
 		r.Before = json.RawMessage(b)
@@ -249,168 +232,20 @@ func (s *Store) PolicyReleases(ctx context.Context) ([]PolicyRelease, error) {
 	return out, rows.Err()
 }
 func (s *Store) PolicyDraftImpact(ctx context.Context, kind, id string) (PolicyImpact, error) {
-	tx, e := s.policyTx(ctx)
+	ds, e := s.PolicyDrafts(ctx)
 	if e != nil {
 		return PolicyImpact{}, e
 	}
-	defer tx.Rollback()
-	d, e := draftTx(ctx, s, tx, kind, id)
-	if e != nil {
-		return PolicyImpact{}, e
-	}
-	live, e := s.policySnapshot(ctx, tx, kind, id)
-	if e != nil {
-		return PolicyImpact{}, e
-	}
-	out := PolicyImpact{Draft: d, Conflict: string(live) != string(d.Base), Devices: []string{}, Sessions: []ImpactSession{}, UnlinkedSessions: []ImpactSession{}}
-	policies, e := s.affectedPolicyIDs(ctx, tx, kind, id)
-	if e != nil {
-		return out, e
-	}
-	rows, e := tx.QueryContext(ctx, "SELECT n.address,COALESCE(n.access_policy_id,''),COALESCE(ns.config,'') FROM nas n LEFT JOIN nas_policy_sets ns ON ns.nas=n.address ORDER BY n.address")
-	if e != nil {
-		return out, e
-	}
-	devices := map[string]bool{}
-	for rows.Next() {
-		var nas, p, raw string
-		if e = rows.Scan(&nas, &p, &raw); e != nil {
-			rows.Close()
-			return out, e
-		}
-		matched := policies[p]
-		if raw != "" {
-			var set NASPolicySet
-			if e = json.Unmarshal([]byte(raw), &set); e != nil {
-				rows.Close()
-				return out, e
-			}
-			for _, b := range set.Bindings {
-				matched = matched || policies[b.PolicyID]
-			}
-		}
-		if matched {
-			devices[nas] = true
-			out.Devices = append(out.Devices, nas)
+	for _, d := range ds {
+		if d.Kind == kind && d.PolicyID == id {
+			b, e := s.PolicyBatchImpact(ctx, []DraftRef{{Kind: kind, PolicyID: id, Revision: d.Revision}})
+			return PolicyImpact{Draft: d, Devices: b.Devices, Sessions: b.Sessions, UnlinkedSessions: b.UnlinkedSessions, Conflict: len(b.Errors) > 0}, e
 		}
 	}
-	e = rows.Err()
-	rows.Close()
-	if e != nil {
-		return out, e
-	}
-	rows, e = tx.QueryContext(ctx, "SELECT s.nas,s.session_id,s.username,s.status,COALESCE(g.policy_id,'') FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token WHERE s.status IN ('active','stale') ORDER BY s.nas,s.session_id")
-	if e != nil {
-		return out, e
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var v ImpactSession
-		var p string
-		if e = rows.Scan(&v.NAS, &v.ID, &v.Username, &v.Status, &p); e != nil {
-			return out, e
-		}
-		if policies[p] {
-			out.Sessions = append(out.Sessions, v)
-		} else if p == "" && devices[v.NAS] {
-			out.UnlinkedSessions = append(out.UnlinkedSessions, v)
-		}
-	}
-	return out, rows.Err()
-}
-func (s *Store) affectedPolicyIDs(ctx context.Context, tx *sql.Tx, kind, id string) (map[string]bool, error) {
-	out := map[string]bool{}
-	if kind != "authentication" {
-		out[id] = true
-		return out, nil
-	}
-	rows, e := tx.QueryContext(ctx, s.SQL("SELECT id FROM access_policies WHERE authentication_id=?"), id)
-	if e != nil {
-		return nil, e
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var p string
-		if e = rows.Scan(&p); e != nil {
-			return nil, e
-		}
-		out[p] = true
-	}
-	return out, rows.Err()
+	return PolicyImpact{}, sql.ErrNoRows
 }
 func (s *Store) PublishPolicyDraft(ctx context.Context, kind, id string, revision int64, actor string) error {
-	tx, e := s.policyTx(ctx)
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	d, e := draftTx(ctx, s, tx, kind, id)
-	if e != nil {
-		return e
-	}
-	if d.Revision != revision {
-		return fmt.Errorf("draft changed; review impact again")
-	}
-	live, e := s.policySnapshot(ctx, tx, kind, id)
-	if e != nil {
-		return e
-	}
-	if string(live) != string(d.Base) {
-		return fmt.Errorf("live policy changed; discard draft and create it again")
-	}
-	if e = s.applyPolicy(ctx, tx, kind, id, d.Payload); e != nil {
-		return e
-	}
-	if kind == "authentication" {
-		ids, err := s.affectedPolicyIDs(ctx, tx, kind, id)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "SAVEPOINT validate_dependents"); err != nil {
-			return err
-		}
-		for policyID := range ids {
-			for _, depKind := range []string{"access", "rules"} {
-				raw, err := s.policySnapshot(ctx, tx, depKind, policyID)
-				if err != nil {
-					return err
-				}
-				if err = s.applyPolicy(ctx, tx, depKind, policyID, raw); err != nil {
-					return fmt.Errorf("dependent policy %s: %w", policyID, err)
-				}
-			}
-		}
-		if _, err = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT validate_dependents"); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "RELEASE SAVEPOINT validate_dependents"); err != nil {
-			return err
-		}
-	}
-	after, e := s.policySnapshot(ctx, tx, kind, id)
-	if e != nil {
-		return e
-	}
-	// A changed policy invalidates its existing grants. Disconnect workers use the
-	// stored grant/session generation, not username, so other access stays intact.
-	if string(after) != string(live) {
-		ids, e := s.affectedPolicyIDs(ctx, tx, kind, id)
-		if e != nil {
-			return e
-		}
-		for p := range ids {
-			if _, e = tx.ExecContext(ctx, s.SQL("UPDATE access_grants SET reason='policy published: reauthentication required',next_attempt=0 WHERE policy_id=? AND reason=''"), p); e != nil {
-				return e
-			}
-		}
-	}
-	if _, e = tx.ExecContext(ctx, s.SQL("INSERT INTO policy_releases(id,kind,policy_id,before_payload,after_payload,actor,created_at) VALUES(?,?,?,?,?,?,?)"), uuid.NewString(), kind, id, string(live), string(after), actor, time.Now().Unix()); e != nil {
-		return e
-	}
-	if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM policy_drafts WHERE kind=? AND policy_id=?"), kind, id); e != nil {
-		return e
-	}
-	return tx.Commit()
+	return s.PublishPolicyBatch(ctx, []DraftRef{{Kind: kind, PolicyID: id, Revision: revision}}, actor)
 }
 func (s *Store) DiscardPolicyDraft(ctx context.Context, kind, id string, revision int64) error {
 	tx, e := s.policyTx(ctx)
@@ -444,16 +279,13 @@ func (s *Store) RollbackPolicyDraft(ctx context.Context, release, actor string) 
 	if raw == "null" {
 		return fmt.Errorf("first publication has no previous version; disable the policy through a draft")
 	}
-	if kind == "rules" {
-		live, e := s.policySnapshot(ctx, tx, kind, id)
-		if e != nil {
-			return e
-		}
-		var old, current RuleSet
-		json.Unmarshal([]byte(raw), &old)
-		json.Unmarshal(live, &current)
-		old.Version = current.Version
-		raw = string(policyJSON(old))
+	restored, e := s.rollbackPayload(ctx, tx, kind, id, json.RawMessage(raw))
+	if e != nil {
+		return e
 	}
-	return s.savePolicyDraftTx(ctx, tx, PolicyDraft{Kind: kind, PolicyID: id, Payload: json.RawMessage(raw)}, actor)
+	raw = string(restored)
+	if e = s.savePolicyDraftTx(ctx, tx, PolicyDraft{Kind: kind, PolicyID: id, Payload: json.RawMessage(raw)}, actor); e != nil {
+		return e
+	}
+	return tx.Commit()
 }

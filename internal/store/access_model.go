@@ -307,13 +307,26 @@ type SegmentMapping struct {
 }
 
 func (s *Store) SaveMapping(ctx context.Context, m SegmentMapping) error {
+	tx, e := s.policyTx(ctx)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if e = s.saveMappingTx(ctx, tx, m); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+func (s *Store) saveMappingTx(ctx context.Context, tx *sql.Tx, m SegmentMapping) error {
 	if m.SegmentID == "" || m.VLAN < 1 || m.VLAN > 4094 || (m.LocationID == "") == (m.NAS == "") {
 		return fmt.Errorf("choose exactly one location or NAS, segment and VLAN 1–4094")
 	}
 	if m.NAS != "" {
-		return s.Exec(ctx, "INSERT INTO nas_segments(nas,segment_id,vlan) VALUES(?,?,?) ON CONFLICT(nas,segment_id) DO UPDATE SET vlan=excluded.vlan", m.NAS, m.SegmentID, m.VLAN)
+		_, err := tx.ExecContext(ctx, s.SQL("INSERT INTO nas_segments(nas,segment_id,vlan) VALUES(?,?,?) ON CONFLICT(nas,segment_id) DO UPDATE SET vlan=excluded.vlan"), m.NAS, m.SegmentID, m.VLAN)
+		return err
 	}
-	return s.Exec(ctx, "INSERT INTO location_segments(location_id,segment_id,vlan) VALUES(?,?,?) ON CONFLICT(location_id,segment_id) DO UPDATE SET vlan=excluded.vlan", m.LocationID, m.SegmentID, m.VLAN)
+	_, err := tx.ExecContext(ctx, s.SQL("INSERT INTO location_segments(location_id,segment_id,vlan) VALUES(?,?,?) ON CONFLICT(location_id,segment_id) DO UPDATE SET vlan=excluded.vlan"), m.LocationID, m.SegmentID, m.VLAN)
+	return err
 }
 func (s *Store) Mappings(ctx context.Context) ([]SegmentMapping, error) {
 	rows, err := s.DB.QueryContext(ctx, "SELECT location_id,'',segment_id,vlan FROM location_segments UNION ALL SELECT '',nas,segment_id,vlan FROM nas_segments")

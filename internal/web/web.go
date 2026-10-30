@@ -302,19 +302,7 @@ func (a *app) nas(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "interim: 60–86400 seconds; stale: at least 3 interim intervals and at most 604800 seconds", 400)
 		return
 	}
-	var location, policy any
-	if v.LocationID != "" {
-		location = v.LocationID
-	}
-	if v.AccessPolicyID != "" {
-		policy = v.AccessPolicyID
-		var mode string
-		if err := a.s.Row(r.Context(), "SELECT mode FROM access_policies WHERE id=?", v.AccessPolicyID).Scan(&mode); err != nil || mode != v.Mode {
-			http.Error(w, "policy mode must match NAS", 400)
-			return
-		}
-	}
-	a.finish(w, r, a.s.Exec(r.Context(), "INSERT INTO nas(address,name,secret,coa_port,portal_enabled,dictionary,access_mode,credential,location_id,access_policy_id,interim_seconds,stale_seconds) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET name=excluded.name,secret=excluded.secret,coa_port=excluded.coa_port,portal_enabled=excluded.portal_enabled,dictionary=excluded.dictionary,access_mode=excluded.access_mode,credential=excluded.credential,location_id=excluded.location_id,access_policy_id=excluded.access_policy_id,interim_seconds=excluded.interim_seconds,stale_seconds=excluded.stale_seconds", ip.String(), v.Name, v.Secret, v.CoAPort, boolInt(v.PortalEnabled), v.Dictionary, v.Mode, v.Credential, location, policy, interim, stale), "save NAS")
+	a.finish(w, r, a.s.SaveNASMetadata(r.Context(), store.NAS{Address: ip.String(), Name: v.Name, CoAPort: v.CoAPort, PortalEnabled: v.PortalEnabled, Dictionary: v.Dictionary, Mode: v.Mode, Credential: v.Credential, LocationID: v.LocationID, AccessPolicyID: v.AccessPolicyID, InterimSeconds: interim, StaleSeconds: stale}, v.Secret), "save NAS metadata")
 }
 func (a *app) vlan(w http.ResponseWriter, r *http.Request) {
 	var v store.VLAN

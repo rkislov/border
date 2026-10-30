@@ -103,6 +103,17 @@ func (s *Store) NASPolicies(ctx context.Context, nas string) (NASPolicySet, erro
 	return set, nil
 }
 func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
+	tx, e := s.policyTx(ctx)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if e = s.saveNASPoliciesTx(ctx, tx, set); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+func (s *Store) saveNASPoliciesTx(ctx context.Context, tx *sql.Tx, set NASPolicySet) error {
 	if set.Version < 0 || len(set.Bindings) > 32 {
 		return fmt.Errorf("invalid version or more than 32 policies")
 	}
@@ -124,7 +135,7 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 			return fmt.Errorf("domain selector requires password authentication")
 		}
 		var source, mode, method string
-		if err := s.Row(ctx, "SELECT a.source,p.mode,a.eap_method FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", b.PolicyID).Scan(&source, &mode, &method); err != nil {
+		if err := tx.QueryRowContext(ctx, s.SQL("SELECT a.source,p.mode,a.eap_method FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?"), b.PolicyID).Scan(&source, &mode, &method); err != nil {
 			return fmt.Errorf("unknown access policy")
 		}
 		expected := "pap"
@@ -151,17 +162,12 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 		}
 		if b.IdentitySource != "" && b.IdentitySource != "local" {
 			var exists int
-			if err := s.Row(ctx, "SELECT 1 FROM domains WHERE id=?", b.IdentitySource).Scan(&exists); err != nil {
+			if err := tx.QueryRowContext(ctx, s.SQL("SELECT 1 FROM domains WHERE id=?"), b.IdentitySource).Scan(&exists); err != nil {
 				return fmt.Errorf("unknown identity domain")
 			}
 		}
 	}
 	sort.Slice(set.Bindings, func(i, j int) bool { return set.Bindings[i].Priority < set.Bindings[j].Priority })
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	// Lock the NAS before the version check, including first creation.
 	result, err := tx.ExecContext(ctx, s.SQL("UPDATE nas SET name=name WHERE address=?"), set.NAS)
 	if err != nil {
@@ -187,7 +193,7 @@ func (s *Store) SaveNASPolicies(ctx context.Context, set NASPolicySet) error {
 	if _, err = tx.ExecContext(ctx, s.SQL("INSERT INTO nas_policy_sets(nas,version,enabled,config) VALUES(?,?,?,?) ON CONFLICT(nas) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,config=excluded.config"), set.NAS, set.Version, integer(set.Enabled), string(raw)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // First matching binding wins. Its authentication failure is terminal.

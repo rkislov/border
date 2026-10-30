@@ -39,7 +39,8 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 		{"authentication-policies", `{"ID":"mfa","Name":"MFA","Source":"directory","DomainID":"corp","RequireTOTP":true,"Steps":["device","primary","totp"],"Enabled":true}`},
 		{"access-policies", `{"ID":"staff","Name":"Staff","AuthenticationID":"mfa","Mode":"network","SegmentID":"staff","SessionSeconds":3600,"Enabled":true,"Subjects":["corp/alice"]}`},
 		{"segment-mappings", `{"LocationID":"office","SegmentID":"staff","VLAN":200}`},
-		{"nas", `{"Address":"192.0.2.1","Name":"NAS","Secret":"nas-secret-123456789","LocationID":"office","AccessPolicyID":"staff"}`},
+		{"nas", `{"Address":"192.0.2.1","Name":"NAS","Secret":"nas-secret-123456789","LocationID":"office"}`},
+		{"nas-assignment", `{"NAS":"192.0.2.1","AccessPolicyID":"staff"}`},
 		{"nas-policies", `{"NAS":"192.0.2.1","Version":0,"Enabled":true,"Bindings":[{"ID":"corp","PolicyID":"staff","Priority":100,"Protocol":"pap","IdentitySource":"corp","Enabled":true}]}`},
 		{"user-groups", `{"ID":"staff","Name":"Staff","Enabled":true,"Members":["corp/alice"]}`},
 		{"access-rules", `{"PolicyID":"staff","Version":0,"Enabled":true,"Rules":[{"ID":"staff","Name":"Staff","Enabled":true,"Effect":"allow","Priority":10,"Groups":["staff"]}]}`},
@@ -51,12 +52,20 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 		if w := send("POST", "/api/"+v.path, v.body, csrf); w.Code != 200 {
 			t.Fatal(v.path, w.Code, w.Body.String())
 		}
-		if kind := map[string]string{"authentication-policies": "authentication", "access-policies": "access", "access-rules": "rules"}[v.path]; kind != "" {
+		if kind := map[string]string{"authentication-policies": "authentication", "access-policies": "access", "access-rules": "rules", "network_segments": "segment", "segment-mappings": "mapping", "nas-policies": "nas-policies", "nas-assignment": "nas-assignment", "user-groups": "group"}[v.path]; kind != "" {
 			var payload map[string]any
 			json.Unmarshal([]byte(v.body), &payload)
 			id, _ := payload["ID"].(string)
 			if id == "" {
 				id, _ = payload["PolicyID"].(string)
+			}
+			if kind == "nas-policies" || kind == "nas-assignment" {
+				id = payload["NAS"].(string)
+			}
+			if kind == "mapping" {
+				var m store.SegmentMapping
+				json.Unmarshal([]byte(v.body), &m)
+				id = store.MappingDraftID(m)
 			}
 			body, _ := json.Marshal(map[string]any{"Kind": kind, "PolicyID": id, "Revision": 1})
 			if w := send("POST", "/api/policy-drafts/publish", string(body), ""); w.Code != 403 {
@@ -70,8 +79,38 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 			}
 		}
 	}
+
+	for _, body := range []string{`{"Kind":"segment","PolicyID":"staff","Payload":{"ID":"staff","Name":"Updated segment"}}`, `{"Kind":"group","PolicyID":"staff","Payload":{"ID":"staff","Name":"Updated group","Enabled":true,"Members":["corp/alice"]}}`} {
+		if w := send("POST", "/api/policy-drafts", body, csrf); w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	var batchState struct{ Drafts []store.PolicyDraft }
+	json.Unmarshal(send("GET", "/api/policy-drafts", "", "").Body.Bytes(), &batchState)
+	refs := []store.DraftRef{}
+	for _, d := range batchState.Drafts {
+		refs = append(refs, store.DraftRef{Kind: d.Kind, PolicyID: d.PolicyID, Revision: d.Revision})
+	}
+	batchBody, _ := json.Marshal(map[string]any{"Drafts": refs})
+	for _, path := range []string{"/api/policy-drafts/batch/impact", "/api/policy-drafts/batch/publish", "/api/policy-drafts/batch/rollback"} {
+		if w := send("POST", path, string(batchBody), ""); w.Code != 403 {
+			t.Fatal("batch CSRF", w.Code)
+		}
+	}
+	w := send("POST", "/api/policy-drafts/batch/impact", string(batchBody), csrf)
+	var impact store.BatchImpact
+	json.Unmarshal(w.Body.Bytes(), &impact)
+	if w.Code != 200 || len(impact.Errors) > 0 || len(impact.Drafts) != 2 {
+		t.Fatal("batch impact", w.Code, w.Body.String())
+	}
+	if w = send("POST", "/api/policy-drafts/batch/publish", string(batchBody), csrf); w.Code != 200 {
+		t.Fatal("batch publish", w.Code, w.Body.String())
+	}
+	if w = send("POST", "/api/policy-drafts/batch/publish", string(batchBody), csrf); w.Code != 409 {
+		t.Fatal("duplicate batch publish", w.Code)
+	}
 	for _, path := range []string{"/api/access-model", "/api/notifications?scope=corp", "/api/nas-policies?nas=192.0.2.1"} {
-		w := send("GET", path, "", "")
+		w = send("GET", path, "", "")
 		if w.Code != 200 || strings.Contains(w.Body.String(), "secret-") || strings.Contains(w.Body.String(), "local-password") {
 			t.Fatal("secret leakage", path, w.Code)
 		}
@@ -128,7 +167,7 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 	if w := send("POST", "/api/policy-diagnostic", body, ""); w.Code != 403 {
 		t.Fatal("diagnostic CSRF", w.Code)
 	}
-	w := send("POST", "/api/policy-diagnostic", body, csrf)
+	w = send("POST", "/api/policy-diagnostic", body, csrf)
 	var diagnostic struct {
 		Status   string
 		PolicyID string

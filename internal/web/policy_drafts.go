@@ -17,6 +17,40 @@ func (a *app) stagePolicy(w http.ResponseWriter, r *http.Request, kind, id strin
 	a.finishPolicy(w, r, err, "save policy draft "+kind+"/"+id)
 }
 func (a *app) policyDraftRoutes(m *http.ServeMux) {
+	for _, action := range []string{"impact", "publish", "rollback"} {
+		m.HandleFunc("POST /api/policy-drafts/batch/"+action, func(w http.ResponseWriter, r *http.Request) {
+			var v struct {
+				Drafts  []store.DraftRef
+				BatchID string
+			}
+			if !decode(w, r, &v) {
+				return
+			}
+			if action == "impact" {
+				out, e := a.s.PolicyBatchImpact(r.Context(), v.Drafts)
+				if e != nil {
+					http.Error(w, "assessment unavailable", 503)
+					return
+				}
+				reply(w, out)
+				return
+			}
+			var err error
+			if action == "publish" {
+				err = a.s.PublishPolicyBatch(r.Context(), v.Drafts, requestAccount(r).Username)
+			} else {
+				err = a.s.RollbackPolicyBatch(r.Context(), v.BatchID, requestAccount(r).Username)
+			}
+			a.finishPolicy(w, r, err, action+" configuration batch "+v.BatchID)
+		})
+	}
+	m.HandleFunc("POST /api/nas-assignment", func(w http.ResponseWriter, r *http.Request) {
+		var v store.NASAssignment
+		if !decode(w, r, &v) {
+			return
+		}
+		a.stagePolicy(w, r, "nas-assignment", v.NAS, v)
+	})
 	m.HandleFunc("GET /api/policy-drafts", func(w http.ResponseWriter, r *http.Request) {
 		drafts, e := a.s.PolicyDrafts(r.Context())
 		if e != nil {
