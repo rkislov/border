@@ -391,6 +391,12 @@ func (s *Store) PublishPolicyBatch(ctx context.Context, refs []DraftRef, actor s
 		return e
 	}
 	defer tx.Rollback()
+	if e = s.publishPolicyBatchTx(ctx, tx, refs, actor); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+func (s *Store) publishPolicyBatchTx(ctx context.Context, tx *sql.Tx, refs []DraftRef, actor string) error {
 	ds, e := s.batchDrafts(ctx, tx, refs)
 	if e != nil {
 		return e
@@ -450,7 +456,7 @@ func (s *Store) PublishPolicyBatch(ctx context.Context, refs []DraftRef, actor s
 			return e
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 func (s *Store) RollbackPolicyBatch(ctx context.Context, batch, actor string) error {
 	if batch == "" {

@@ -17,6 +17,28 @@ func (a *app) stagePolicy(w http.ResponseWriter, r *http.Request, kind, id strin
 	a.finishPolicy(w, r, err, "save policy draft "+kind+"/"+id)
 }
 func (a *app) policyDraftRoutes(m *http.ServeMux) {
+	m.HandleFunc("POST /api/policy-drafts/schedules", func(w http.ResponseWriter, r *http.Request) {
+		var v struct {
+			ReviewID string
+			DueAt    int64
+		}
+		if !decode(w, r, &v) {
+			return
+		}
+		id, e := a.s.SchedulePolicyReview(r.Context(), v.ReviewID, v.DueAt, requestAccount(r).Username)
+		if e != nil {
+			a.finishPolicy(w, r, e, "")
+			return
+		}
+		reply(w, map[string]string{"ID": id})
+	})
+	m.HandleFunc("POST /api/policy-drafts/schedules/cancel", func(w http.ResponseWriter, r *http.Request) {
+		var v struct{ ID string }
+		if !decode(w, r, &v) {
+			return
+		}
+		a.finishPolicy(w, r, a.s.CancelPolicySchedule(r.Context(), v.ID, requestAccount(r).Username), "cancel scheduled publication "+v.ID)
+	})
 	m.HandleFunc("POST /api/policy-drafts/review-settings", func(w http.ResponseWriter, r *http.Request) {
 		var v store.ReviewSettings
 		if !decode(w, r, &v) {
@@ -112,7 +134,12 @@ func (a *app) policyDraftRoutes(m *http.ServeMux) {
 			http.Error(w, "reviews unavailable", 503)
 			return
 		}
-		reply(w, map[string]any{"Drafts": drafts, "Releases": releases, "ReviewSettings": settings, "Reviews": reviews, "Username": requestAccount(r).Username})
+		schedules, e := a.s.PolicySchedules(r.Context())
+		if e != nil {
+			http.Error(w, "schedules unavailable", 503)
+			return
+		}
+		reply(w, map[string]any{"Schedules": schedules, "Drafts": drafts, "Releases": releases, "ReviewSettings": settings, "Reviews": reviews, "Username": requestAccount(r).Username})
 	})
 	m.HandleFunc("POST /api/policy-drafts", func(w http.ResponseWriter, r *http.Request) {
 		var d store.PolicyDraft
@@ -157,6 +184,8 @@ func (a *app) finishPolicy(w http.ResponseWriter, r *http.Request, err error, ac
 	if err != nil {
 		message := "Не удалось сохранить политику. Проверьте поля и ссылки на существующие объекты."
 		switch {
+		case strings.HasPrefix(err.Error(), "schedule:"):
+			message = "Выберите будущее время в пределах года. Если расписание уже существует, сначала отмените его; обновите список перед повторной попыткой."
 		case strings.HasPrefix(err.Error(), "approval:"):
 			message = reviewErrorText(strings.TrimSpace(strings.TrimPrefix(err.Error(), "approval:")))
 		case strings.Contains(err.Error(), "changed"):
@@ -174,6 +203,8 @@ func (a *app) finishPolicy(w http.ResponseWriter, r *http.Request, err error, ac
 
 func reviewErrorText(reason string) string {
 	messages := map[string]string{
+		"request is no longer approved":                                 "Одобрение уже недействительно или пакет опубликован. Обновите список.",
+		"scheduling administrator account changed":                      "Учётная запись администратора, создавшего расписание, изменилась. Создайте новое расписание.",
 		"active administrator required":                                 "Нужна действующая учётная запись администратора.",
 		"enable at least two administrators first":                      "Сначала создайте минимум двух активных администраторов.",
 		"comment exceeds 1000 bytes":                                    "Комментарий слишком длинный (максимум 1000 байт).",
