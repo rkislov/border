@@ -113,3 +113,49 @@ func TestVPNAccountingRefusesAmbiguity(t *testing.T) {
 		})
 	}
 }
+
+func TestVPNRapidReconnectAndConcurrentClaims(t *testing.T) {
+	s := ruleStore(t)
+	ctx := t.Context()
+	now := time.Now().Unix()
+	add := func() string {
+		t.Helper()
+		v, e := s.NewAccessGrant(ctx, "nas", "user", "vpn", now+600)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = s.EnableVPNAccounting(ctx, v, "tuple"); e != nil {
+			t.Fatal(e)
+		}
+		return v
+	}
+	event := func(id, key, kind string, at, seconds int64) {
+		t.Helper()
+		if e := s.ApplyAccounting(ctx, AccountingEvent{NAS: "nas", ID: id, Username: "user", AccountingKey: "tuple", Key: key, Kind: kind, At: at, Seconds: seconds, Timed: true, HasSeconds: true}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	check := func(id, token, status string) {
+		t.Helper()
+		var got, st string
+		if e := s.Row(ctx, "SELECT grant_token,status FROM sessions WHERE nas='nas' AND session_id=?", id).Scan(&got, &st); e != nil || got != token || st != status {
+			t.Fatal(got, st, e)
+		}
+	}
+	first := add()
+	event("one", "start1", "start", now, 0)
+	second := add()
+	event("two", "start2", "start", now, 0)
+	check("one", first, "active")
+	check("two", second, "active")
+	event("one", "stop1", "stop", now+1, 1)
+	third := add()
+	event("three", "start3", "start", now+1, 0)
+	check("three", third, "active")
+	check("two", second, "active")
+	event("one", "replay-start", "start", now, 0)
+	check("one", first, "stopped")
+	event("two", "stop2", "stop", now+2, 2)
+	check("two", second, "stopped")
+	check("three", third, "active")
+}
