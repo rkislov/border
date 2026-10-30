@@ -456,7 +456,7 @@ func (s *Store) publishPolicyBatchTx(ctx context.Context, tx *sql.Tx, refs []Dra
 			return e
 		}
 	}
-	return nil
+	return s.enqueuePolicyEvent(ctx, tx, "published batch "+batch, "Border: пакет "+batch+" опубликован. Администратор: "+actor+". Проверьте результаты отзыва доступа в панели.")
 }
 func (s *Store) RollbackPolicyBatch(ctx context.Context, batch, actor string) error {
 	if batch == "" {

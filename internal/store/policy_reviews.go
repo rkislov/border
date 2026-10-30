@@ -63,7 +63,13 @@ func (s *Store) reviewAdmin(ctx context.Context, tx *sql.Tx, user string) (int64
 }
 func (s *Store) reviewAudit(ctx context.Context, tx *sql.Tx, actor, action string) error {
 	_, e := tx.ExecContext(ctx, s.SQL("INSERT INTO auth_log(id,occurred_at,source,identity,result,reason) VALUES(?,?,?,?,?,?)"), uuid.NewString(), time.Now().Unix(), "web", actor, "updated", action)
-	return e
+	if e != nil {
+		return e
+	}
+	if strings.HasPrefix(action, "require policy approval:") || (strings.HasPrefix(action, "scheduled policy publication ") && strings.Contains(action, ": published")) {
+		return nil
+	}
+	return s.enqueuePolicyEvent(ctx, tx, action, "Border: "+policyNotificationMessage(action)+". Администратор: "+actor+". Откройте раздел «Черновики и публикации».")
 }
 func (s *Store) SaveReviewSettings(ctx context.Context, v ReviewSettings, actor string) error {
 	tx, e := s.policyTx(ctx)
@@ -96,7 +102,7 @@ func (s *Store) SaveReviewSettings(ctx context.Context, v ReviewSettings, actor 
 	if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_review_settings SET required=?,revision=revision+1 WHERE id=1"), integer(v.Required)); e != nil {
 		return e
 	}
-	if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_reviews SET state='stale',reason='approval mode changed',updated_at=? WHERE state IN ('pending','approved')"), time.Now().Unix()); e != nil {
+	if e = s.invalidateReviewSelection(ctx, tx, "state IN ('pending','approved')", nil, "approval mode changed"); e != nil {
 		return e
 	}
 	if e = s.reviewAudit(ctx, tx, actor, fmt.Sprintf("require policy approval: %t", v.Required)); e != nil {
@@ -104,13 +110,40 @@ func (s *Store) SaveReviewSettings(ctx context.Context, v ReviewSettings, actor 
 	}
 	return tx.Commit()
 }
+func (s *Store) invalidateReviewSelection(ctx context.Context, tx *sql.Tx, where string, args []any, reason string) error {
+	rows, e := tx.QueryContext(ctx, s.SQL("SELECT id FROM policy_reviews WHERE "+where), args...)
+	if e != nil {
+		return e
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if e = rows.Scan(&id); e != nil {
+			rows.Close()
+			return e
+		}
+		ids = append(ids, id)
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return e
+	}
+	for _, id := range ids {
+		if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_reviews SET state='stale',reason=?,updated_at=? WHERE id=?"), reason, time.Now().Unix(), id); e != nil {
+			return e
+		}
+		if e = s.enqueuePolicyEvent(ctx, tx, "review stale "+id, "Border: согласование пакета "+id+" сброшено. Причина: "+reason+". Требуется новая проверка."); e != nil {
+			return e
+		}
+	}
+	return nil
+}
 func (s *Store) invalidateDraftReviews(ctx context.Context, tx *sql.Tx, kind, id, reason string) error {
-	_, e := tx.ExecContext(ctx, s.SQL("UPDATE policy_reviews SET state='stale',reason=?,updated_at=? WHERE state IN ('pending','approved') AND EXISTS(SELECT 1 FROM policy_review_items i WHERE i.review_id=policy_reviews.id AND i.kind=? AND i.policy_id=?)"), reason, time.Now().Unix(), kind, id)
-	return e
+	return s.invalidateReviewSelection(ctx, tx, "state IN ('pending','approved') AND EXISTS(SELECT 1 FROM policy_review_items i WHERE i.review_id=policy_reviews.id AND i.kind=? AND i.policy_id=?)", []any{kind, id}, reason)
 }
 func (s *Store) refreshReviewAccounts(ctx context.Context, tx *sql.Tx) error {
-	_, e := tx.ExecContext(ctx, s.SQL("UPDATE policy_reviews SET state='stale',reason='reviewer account changed',updated_at=? WHERE state='approved' AND NOT EXISTS(SELECT 1 FROM admins a WHERE a.username=policy_reviews.reviewer AND a.role='admin' AND a.enabled=1 AND a.revision=policy_reviews.reviewer_revision)"), time.Now().Unix())
-	return e
+	return s.invalidateReviewSelection(ctx, tx, "state='approved' AND NOT EXISTS(SELECT 1 FROM admins a WHERE a.username=policy_reviews.reviewer AND a.role='admin' AND a.enabled=1 AND a.revision=policy_reviews.reviewer_revision)", nil, "reviewer account changed")
 }
 func (s *Store) validateReviewBatch(ctx context.Context, tx *sql.Tx, ds []PolicyDraft) error {
 	if _, e := tx.ExecContext(ctx, "SAVEPOINT review_check"); e != nil {
@@ -348,4 +381,13 @@ func (s *Store) requireBatchApproval(ctx context.Context, tx *sql.Tx, ds []Polic
 		return "", fmt.Errorf("approval: reviewer account changed; submit a new request")
 	}
 	return id, nil
+}
+
+func policyNotificationMessage(action string) string {
+	for _, v := range [][2]string{{"submit policy approval ", "Новая заявка на согласование: "}, {"approved policy approval ", "Пакет одобрен: "}, {"rejected policy approval ", "Пакет отклонён: "}, {"schedule policy publication ", "Публикация запланирована: "}, {"cancel policy schedule ", "Расписание отменено: "}, {"scheduled policy publication ", "Результат публикации по расписанию: "}} {
+		if strings.HasPrefix(action, v[0]) {
+			return v[1] + strings.TrimPrefix(action, v[0])
+		}
+	}
+	return action
 }
