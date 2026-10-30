@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReviewAPISelfApprovalCSRFAndPublicationGuard(t *testing.T) {
@@ -35,7 +36,7 @@ func TestReviewAPISelfApprovalCSRFAndPublicationGuard(t *testing.T) {
 	}
 	page := send("GET", "/", "alice", "", "")
 	csrf := strings.Split(strings.Split(page.Body.String(), `name="csrf-token" content="`)[1], `"`)[0]
-	for _, path := range []string{"/api/policy-drafts/review-settings", "/api/policy-drafts/reviews", "/api/policy-drafts/reviews/decision"} {
+	for _, path := range []string{"/api/policy-drafts/schedules", "/api/policy-drafts/schedules/cancel", "/api/policy-drafts/review-settings", "/api/policy-drafts/reviews", "/api/policy-drafts/reviews/decision"} {
 		if w := send("POST", path, "alice", `{}`, ""); w.Code != 403 {
 			t.Fatal("review CSRF", path, w.Code)
 		}
@@ -66,6 +67,28 @@ func TestReviewAPISelfApprovalCSRFAndPublicationGuard(t *testing.T) {
 	}
 	if w = send("POST", "/api/policy-drafts/reviews/decision", "bob", string(decision), csrf); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
+	}
+
+	scheduleBody, _ := json.Marshal(map[string]any{"ReviewID": request.ID, "DueAt": time.Now().Add(time.Hour).Unix()})
+	w = send("POST", "/api/policy-drafts/schedules", "alice", string(scheduleBody), csrf)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var job struct{ ID string }
+	if e = json.Unmarshal(w.Body.Bytes(), &job); e != nil {
+		t.Fatal(e)
+	}
+	cancelBody, _ := json.Marshal(job)
+	if w = send("POST", "/api/policy-drafts/schedules/cancel", "bob", string(cancelBody), csrf); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	w = send("GET", "/api/policy-drafts", "alice", "", "")
+	var list struct{ Schedules []store.PolicySchedule }
+	if e = json.Unmarshal(w.Body.Bytes(), &list); e != nil {
+		t.Fatal(e)
+	}
+	if len(list.Schedules) != 1 || list.Schedules[0].Actor != "alice" || list.Schedules[0].State != "cancelled" {
+		t.Fatal(list)
 	}
 	if w = send("POST", "/api/policy-drafts/batch/publish", "alice", batch, csrf); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())

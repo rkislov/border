@@ -18,6 +18,27 @@ func StartRevocationsWithFallback(parent context.Context, s *store.Store, fallba
 	done := make(chan struct{})
 	statusDone := make(chan struct{})
 	retentionDone := make(chan struct{})
+	scheduleDone := make(chan struct{})
+	go func() {
+		defer close(scheduleDone)
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			run, cancelRun := context.WithTimeout(ctx, 30*time.Second)
+			started := time.Now()
+			err := s.RunPolicySchedules(run, started)
+			s.Metrics.Finish("policy_schedule", started, err)
+			cancelRun()
+			if err != nil && ctx.Err() == nil {
+				slog.Error("policy schedule scan failed", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	go func() {
 		defer close(retentionDone)
 		ticker := time.NewTicker(time.Minute)
@@ -77,7 +98,7 @@ func StartRevocationsWithFallback(parent context.Context, s *store.Store, fallba
 			}
 		}
 	}()
-	return func() { cancel(); <-done; <-statusDone; <-retentionDone }
+	return func() { cancel(); <-done; <-statusDone; <-retentionDone; <-scheduleDone }
 }
 func RevokeSessions(ctx context.Context, s *store.Store, fallbacks ...DisconnectFallback) error {
 	var fallback DisconnectFallback
