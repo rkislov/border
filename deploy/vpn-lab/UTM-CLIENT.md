@@ -50,8 +50,7 @@ start time. Class-based accounting retains its previous rules.
 The first Start must include Event-Timestamp and Acct-Session-Time <= 5 s;
 the authorization window is 30 s with a 2 s timestamp tolerance. Events older
 than 60 s or more than 5 s in the future are not correlated. Missing fields,
-unknown Class, ambiguous grants (including very rapid reconnects with the same
-tuple), and lost Start events are left unlinked rather than guessed. Previously
+unknown Class, ambiguous unclaimed grants, and lost Start events are left unlinked rather than guessed. Previously
 unlinked sessions need a new connection; there is no username-only backfill.
 Synchronize NAS/server clocks. An unlinked session cannot receive policy-based
 automatic revocation; inspect its grant association during deployment.
@@ -72,3 +71,34 @@ This proves Linux → CHR → Border → Samba interoperability. It does not est
 native macOS or Windows compatibility. macOS currently selects Wi-Fi for the
 IKEv2 outer connection and fails to reach the host-only CHR address; the Linux
 VM avoids that routing issue through a dedicated lab interface.
+
+## Session isolation regression (2026-10-30)
+
+Live tests found and fixed two issues: consumed grants previously prevented
+rapid reconnects from binding, and the SSH adapter incorrectly compared the
+wire username with the canonical domain identity. Claimed grants now remain
+attached to their own session and do not compete for a fresh session. Only a
+unique unclaimed grant may be assigned; reuse of the same accounting ID within
+timestamp precision remains fail-closed. The SSH adapter validates the grant's
+NAS, SSH policy and canonical or unqualified login before correlation/removal.
+
+Verified after deployment:
+
+- Three consecutive domain VPN connects/reconnects: three distinct grants;
+  stopped predecessors remain stopped and the newest session is linked.
+- Two domain VPNs from client addresses `.20` and `.21`, plus an SSH session
+  of the same domain user: disconnecting VPN A returns Disconnect-ACK;
+  VPN B remains established with working traffic, SSH keeps emitting heartbeats.
+- Disconnecting the SSH session returns RouterOS-SSH-Disconnect; its SSH client
+  receives `logout requested`. VPN B remains established, with 3/3 ping replies.
+- Two VPNs from the same source IP `.20` with distinct IKE identities but the
+  same EAP domain account: both have their own VIP and grant. Disconnecting A
+  leaves B established and carrying traffic. Distinct IKE identities prevent
+  strongSwan from reusing the first IKE SA; `unique=never` disables
+  INITIAL_CONTACT replacement for this parallel-client test.
+
+These are targeted session-disconnect tests through Border's authenticated
+session-action API. Blocking an identity or expiring a shared policy is
+intentionally broader and may revoke every matching grant; those automatic
+scenarios were tested separately above. Test-only aliases/configurations and
+sessions are cleaned up afterward; the original single-client profile remains.

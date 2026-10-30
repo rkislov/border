@@ -44,15 +44,33 @@ func (s *Store) vpnAccountingToken(ctx context.Context, tx *sql.Tx, e Accounting
 	if err = rows.Err(); err != nil {
 		return "", err
 	}
-	// An established claim is identified by the accounting session and its start
-	// time, even if another authorization for the same tuple has since appeared.
+	// Claimed grants cannot be assigned to another session. Only unclaimed
+	// authorizations compete for a fresh Start (rapid reconnects included).
+	var pending []candidate
 	for _, c := range all {
-		if c.id == e.ID && c.id != "" && start >= c.start-2 && start <= c.start+2 {
-			return c.token, nil
+		if c.id == "" {
+			pending = append(pending, c)
 		}
 	}
-	if e.Kind != "start" || e.Seconds > 5 || len(all) != 1 || all[0].id != "" {
+	var matched string
+	for _, c := range all {
+		if c.id == e.ID && c.id != "" && start >= c.start-2 && start <= c.start+2 {
+			if matched != "" {
+				return "", nil
+			}
+			matched = c.token
+		}
+	}
+	if matched != "" {
+		// A reused session ID within timestamp precision cannot distinguish an
+		// old Start replay from a fresh authorization. Never guess.
+		if e.Kind == "start" && len(pending) > 0 {
+			return "", nil
+		}
+		return matched, nil
+	}
+	if e.Kind != "start" || e.Seconds > 5 || len(pending) != 1 {
 		return "", nil
 	}
-	return all[0].token, nil
+	return pending[0].token, nil
 }

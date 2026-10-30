@@ -88,7 +88,7 @@ func TestEncryptedConfig(t *testing.T) {
 // A real SSH handshake verifies pinning, bounded command handling and the
 // requirement to observe absence after removal, without a physical router.
 func TestDisconnectSSH(t *testing.T) {
-	for _, scenario := range []string{"success", "wrong-key", "still-active", "generation-changed", "ambiguous", "ssh-on-vpn-nas"} {
+	for _, scenario := range []string{"success", "wrong-key", "still-active", "generation-changed", "ambiguous", "ssh-on-vpn-nas", "canonical-domain"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := service(t)
 			ctx := t.Context()
@@ -111,6 +111,11 @@ func TestDisconnectSSH(t *testing.T) {
 			}
 			if scenario == "ssh-on-vpn-nas" {
 				if e := s.Store.Exec(ctx, "UPDATE nas SET access_mode='vpn'"); e != nil {
+					t.Fatal(e)
+				}
+			}
+			if scenario == "canonical-domain" {
+				if e := s.Store.Exec(ctx, "UPDATE access_grants SET username='samba-lab/user'"); e != nil {
 					t.Fatal(e)
 				}
 			}
@@ -192,7 +197,7 @@ func TestDisconnectSSH(t *testing.T) {
 				}
 			}()
 			ok, e := s.Disconnect(context.Background(), v)
-			if scenario == "success" || scenario == "ssh-on-vpn-nas" {
+			if scenario == "success" || scenario == "ssh-on-vpn-nas" || scenario == "canonical-domain" {
 				if !ok || e != nil {
 					t.Fatal(ok, e)
 				}

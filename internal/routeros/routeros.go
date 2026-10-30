@@ -180,9 +180,15 @@ func (s *Service) Disconnect(ctx context.Context, v store.Session) (bool, error)
 	if e != nil || !cfg.Enabled {
 		return false, e
 	}
-	var dictionary, mode string
-	if e = s.Store.Row(ctx, "SELECT n.dictionary,p.mode FROM nas n JOIN access_grants g ON g.nas=n.address JOIN access_policies p ON p.id=g.policy_id WHERE n.address=? AND g.token=? AND g.username=?", v.NAS, v.GrantToken, v.Username).Scan(&dictionary, &mode); e != nil {
+	var dictionary, mode, identity string
+	if e = s.Store.Row(ctx, "SELECT n.dictionary,p.mode,g.username FROM nas n JOIN access_grants g ON g.nas=n.address JOIN access_policies p ON p.id=g.policy_id WHERE n.address=? AND g.token=?", v.NAS, v.GrantToken).Scan(&dictionary, &mode, &identity); e != nil {
 		return false, e
+	}
+	// Class binds the accounting session to a canonical domain identity, while
+	// RouterOS login accounting may retain the original unqualified username.
+	_, login, qualified := strings.Cut(identity, "/")
+	if !strings.EqualFold(v.Username, identity) && !(qualified && strings.EqualFold(v.Username, login)) {
+		return false, fmt.Errorf("RouterOS session does not match grant identity")
 	}
 	if dictionary != "mikrotik" || mode != "ssh" {
 		return false, fmt.Errorf("RouterOS adapter requires a tracked SSH grant on a MikroTik NAS")
