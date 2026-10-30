@@ -11,7 +11,7 @@ function draftText(parent,tag,text){const el=document.createElement(tag);el.text
 function applyDraftChoices(){
  if(!draftChoiceModel)return;
  for(const [kind,field,selector] of [['authentication','Authentication','.authentication-select'],['access','Access','.access-select,.rule-policy-select'],['segment','Segments','.segment-select']]){
-  const items=new Map(draftChoiceModel[field].map(v=>[v.ID,v]));for(const d of policyDraftCache.filter(d=>d.Kind===kind))items.set(d.PolicyID,{...d.Payload,Name:d.Payload.Name+' (черновик)'});selectItems(selector,[...items.values()]);
+  const items=new Map(draftChoiceModel[field].map(v=>[v.ID,v]));for(const d of policyDraftCache.filter(d=>d.Kind===kind)){if(d.Payload===null){items.delete(d.PolicyID);continue;}items.set(d.PolicyID,{...d.Payload,Name:d.Payload.Name+' (черновик)'});}selectItems(selector,[...items.values()]);
  }
  const sel=$('#assignment-nas'),old=sel.value;sel.replaceChildren(new Option('Выберите NAS',''));for(const n of state?.nas||[])sel.add(new Option(n.Name+' · '+n.Address,n.Address));sel.value=old;
 }
@@ -20,27 +20,28 @@ async function loadPolicyDrafts(){
  const holder=$('#policy-draft-list');holder.replaceChildren();
  if(!v.Drafts.length)draftText(holder,'p','Черновиков пока нет. Сохраните изменения в редакторе.');
  for(const d of v.Drafts){
-  const row=document.createElement('div');row.className='draft-entry';const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=selectedDrafts.has(draftKey(d));check.onchange=()=>{if(check.checked)selectedDrafts.add(draftKey(d));else selectedDrafts.delete(draftKey(d));$('#policy-impact').hidden=true;};label.append(check,document.createTextNode(' В пакет: '+policyKindNames[d.Kind]+' · '+d.PolicyID));row.append(label);draftText(row,'p','Редакция '+d.Revision+' · '+d.Actor+' · '+date(d.UpdatedAt));
-  row.append(draftButton('Оценить отдельно',()=>showPolicyBatch([d])),draftButton('Редактировать',()=>editPolicyDraft(d)),draftButton('Удалить черновик',async()=>{if(!confirm('Удалить черновик '+d.PolicyID+'? Рабочая конфигурация сохранится.'))return;await draftAPI('/discard',draftRef(d));$('#policy-impact').hidden=true;await loadPolicyDrafts();}));holder.append(row);
+  const row=document.createElement('div');row.className='draft-entry';const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=selectedDrafts.has(draftKey(d));check.onchange=()=>{if(check.checked)selectedDrafts.add(draftKey(d));else selectedDrafts.delete(draftKey(d));$('#policy-impact').hidden=true;};label.append(check,document.createTextNode(' В пакет: '+policyKindNames[d.Kind]+' · '+d.PolicyID));row.append(label);draftText(row,'p',(d.Payload===null?'УДАЛЕНИЕ · ':'Изменение · ')+'Редакция '+d.Revision+' · '+d.Actor+' · '+date(d.UpdatedAt));
+  row.append(draftButton('Оценить отдельно',()=>showPolicyBatch([d])),...(d.Payload===null?[]:[draftButton('Редактировать',()=>editPolicyDraft(d))]),draftButton('Удалить черновик',async()=>{if(!confirm('Удалить черновик '+d.PolicyID+'? Рабочая конфигурация сохранится.'))return;await draftAPI('/discard',draftRef(d));$('#policy-impact').hidden=true;await loadPolicyDrafts();}));holder.append(row);
  }
  const history=$('#policy-release-list');history.replaceChildren();if(!v.Releases.length)draftText(history,'p','Публикаций пока нет.');const batches=new Map();
  for(const r of v.Releases){const key=r.BatchID||r.ID;if(!batches.has(key))batches.set(key,[]);batches.get(key).push(r);}
  for(const [key,items] of batches){
   const row=document.createElement('div');row.className='draft-entry';draftText(row,'h3',items[0].BatchID?'Пакет '+key.slice(0,8):'Публикация');draftText(row,'p',date(items[0].CreatedAt)+' · '+items[0].Actor);
-  for(const r of items){const details=document.createElement('details');draftText(details,'summary',policyKindNames[r.Kind]+' · '+r.PolicyID);draftText(details,'pre',JSON.stringify(r.After,null,2));row.append(details);}
+  for(const r of items){const details=document.createElement('details');draftText(details,'summary',policyKindNames[r.Kind]+' · '+r.PolicyID);draftText(details,'pre',r.After===null?'Объект удалён':JSON.stringify(r.After,null,2));row.append(details);}
   row.append(draftButton('Подготовить откат',async()=>{await draftAPI(items[0].BatchID?'/batch/rollback':'/rollback',items[0].BatchID?{BatchID:key}:{ReleaseID:key});$('#policy-impact').hidden=true;await loadPolicyDrafts();notice('Черновики отката созданы. Выберите их в пакет и оцените влияние.');}));history.append(row);
  }
- applyDraftChoices();
+ applyDraftChoices();renderDeletionChoices();
 }
 async function savePolicyDraft(kind,payload){try{const id=payloadID(kind,payload),existing=policyDraftCache.find(d=>d.Kind===kind&&d.PolicyID===id);await draftAPI('',{Kind:kind,PolicyID:id,Revision:existing?.Revision||0,Payload:payload});$('#policy-impact').hidden=true;await loadPolicyDrafts();notice('Черновик сохранён. Связанные изменения можно опубликовать одним пакетом.');return true;}catch(e){notice(e.message,true);return false;}}
 function editPolicyDraft(d){
- const p=structuredClone(d.Payload);
+ if(d.Payload===null){notice('Это черновик удаления. Его можно исключить из пакета или удалить.',true);return;}const p=structuredClone(d.Payload);
  if(d.Kind==='rules'){activateView('access',true);$('#rule-policy').value=d.PolicyID;ruleDraft=p;rulesDirty=true;renderRuleDraft();return;}
  if(d.Kind==='nas-policies'){activateView('nas',true);$('#bindings-nas').value=p.NAS;bindingsDraft=p;bindingsDirty=true;renderBindings();return;}
  const forms={authentication:['authentication','authentication-form'],access:['access','access-form'],group:['users','user-group-form'],segment:['locations','segment-form'],mapping:['locations','mapping-form'],'nas-assignment':['nas','nas-assignment-form']};const [view,form]=forms[d.Kind];activateView(view,true);fillForm('#'+form,p);
 }
 function renderDraftDiff(h,d){
  const details=document.createElement('details');details.open=true;draftText(details,'summary',policyKindNames[d.Kind]+' · '+d.PolicyID+' · редакция '+d.Revision);
+ if(d.Payload===null){draftText(details,'p','Удаление объекта при публикации. Сохранённая версия останется в истории для отката.');draftText(details,'pre',JSON.stringify(d.Base,null,2));h.append(details);return;}
  const labels={Name:'Название',Enabled:'Включено',Source:'Источник',DomainID:'Домен',Steps:'Проверки',AuthenticationID:'Авторизация',Mode:'Назначение',SegmentID:'Сегмент',LocationID:'Расположение',VLAN:'VLAN',AccessPolicyID:'Политика доступа',SessionSeconds:'Срок сессии, сек.',Subjects:'Личности',Members:'Участники',Rules:'Правила',Bindings:'Привязки'};
  for(const key of Object.keys(d.Payload)){if(['ID','PolicyID','Version','NAS'].includes(key))continue;const before=d.Base?.[key],after=d.Payload[key];if(JSON.stringify(before)!==JSON.stringify(after))draftText(details,'p',(labels[key]||key)+': '+(before===undefined?'—':JSON.stringify(before))+' → '+JSON.stringify(after));}h.append(details);
 }
@@ -60,3 +61,20 @@ for(const id of ['authentication-form','access-form','user-group-form','segment-
 $('#save-rules').textContent='Сохранить черновик правил';$('#bindings-save').textContent='Сохранить черновик привязок';
 $('#assignment-nas').onchange=()=>{const nas=$('#assignment-nas').value,d=policyDraftCache.find(d=>d.Kind==='nas-assignment'&&d.PolicyID===nas);$('#nas-assignment-form').elements.AccessPolicyID.value=d?.Payload.AccessPolicyID??state?.nas.find(n=>n.Address===nas)?.AccessPolicyID??'';};
 $('#nas-assignment-form').onsubmit=async e=>{e.preventDefault();await savePolicyDraft('nas-assignment',Object.fromEntries(new FormData(e.target)));};
+
+function renderDeletionChoices(){
+ if(!draftChoiceModel)return;
+ const kind=$('#deletion-kind').value,sel=$('#deletion-object'),old=sel.value,m=draftChoiceModel;
+ let items=[];
+ if(kind==='authentication')items=m.Authentication.map(x=>[x.ID,x.Name]);
+ if(kind==='access')items=m.Access.map(x=>[x.ID,x.Name]);
+ if(kind==='rules')items=m.RuleSets.filter(x=>x.Version>0).map(x=>[x.PolicyID,x.PolicyID]);
+ if(kind==='group')items=m.Groups.map(x=>[x.ID,x.Name]);
+ if(kind==='segment')items=m.Segments.map(x=>[x.ID,x.Name]);
+ if(kind==='mapping')items=m.Mappings.map(x=>[payloadID('mapping',x),payloadID('mapping',x)+' · VLAN '+x.VLAN]);
+ if(kind==='nas-policies')items=(state?.nas||[]).map(x=>[x.Address,x.Name]);
+ if(kind==='nas-assignment')items=(state?.nas||[]).filter(x=>x.AccessPolicyID).map(x=>[x.Address,x.Name+' · '+x.AccessPolicyID]);
+ sel.replaceChildren(new Option('Выберите объект',''));for(const [id,name] of items)sel.add(new Option(name+' · '+id,id));if([...sel.options].some(x=>x.value===old))sel.value=old;
+}
+$('#deletion-kind').onchange=renderDeletionChoices;
+$('#deletion-form').onsubmit=async e=>{e.preventDefault();const kind=$('#deletion-kind').value,id=$('#deletion-object').value,d=policyDraftCache.find(x=>x.Kind===kind&&x.PolicyID===id);if(d&&!confirm('Заменить существующий черновик '+id+' на удаление?'))return;try{await draftAPI('',{Kind:kind,PolicyID:id,Revision:d?.Revision||0,Operation:'delete'});$('#policy-impact').hidden=true;await loadPolicyDrafts();notice('Черновик удаления создан. Объект действует до публикации пакета.');}catch(e){notice(e.message,true);}};

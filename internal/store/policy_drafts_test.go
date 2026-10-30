@@ -180,14 +180,14 @@ func TestRulesDraftRollbackVersions(t *testing.T) {
 	drafts, _ := s.PolicyDrafts(ctx)
 	var saved RuleSet
 	json.Unmarshal(drafts[0].Payload, &saved)
-	if saved.Version != 1 {
+	if !isDeletion(drafts[0].Payload) {
 		t.Fatal(saved)
 	}
 	if e := s.PublishPolicyDraft(ctx, "rules", "access", 2, "admin"); e != nil {
 		t.Fatal(e)
 	}
 	live, _ = s.Rules(ctx, "access")
-	if live.Enabled || live.Version != 2 {
+	if live.Enabled || live.Version != 0 {
 		t.Fatal(live)
 	}
 }

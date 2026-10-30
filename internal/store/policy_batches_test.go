@@ -90,13 +90,54 @@ func TestBatchPublishesNewDependenciesAtomically(t *testing.T) {
 	if e = s.PublishPolicyBatch(ctx, refs, "publisher"); e == nil {
 		t.Fatal("double publish")
 	}
-	if e = s.RollbackPolicyBatch(ctx, batch, "admin"); e == nil {
-		t.Fatal("invented pre-creation versions")
-	}
+	must(s.RollbackPolicyBatch(ctx, batch, "admin"))
 	ds, _ := s.PolicyDrafts(ctx)
-	if len(ds) != 0 {
-		t.Fatal("partial rollback drafts")
+	undo := []DraftRef{}
+	for _, d := range ds {
+		if !isDeletion(d.Payload) {
+			t.Fatal("new object not deleted by rollback", d.Kind)
+		}
+		undo = append(undo, DraftRef{d.Kind, d.PolicyID, d.Revision})
 	}
+	impact, e = s.PolicyBatchImpact(ctx, undo)
+	must(e)
+	if len(impact.Errors) > 0 {
+		t.Fatal(impact.Errors)
+	}
+	must(s.PublishPolicyBatch(ctx, undo, "admin"))
+	for _, table := range []string{"network_segments", "user_groups", "access_rule_sets", "location_segments", "nas_policy_sets"} {
+		must(s.Row(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n))
+		if n != 0 {
+			t.Fatal("rollback left objects", table, n)
+		}
+	}
+	// Roll back the deletion package: it must restore the complete new configuration.
+	history, _ = s.PolicyReleases(ctx)
+	var deletedBatch string
+	for _, r := range history {
+		if r.BatchID != batch {
+			deletedBatch = r.BatchID
+			break
+		}
+	}
+	must(s.RollbackPolicyBatch(ctx, deletedBatch, "admin"))
+	ds, _ = s.PolicyDrafts(ctx)
+	undo = nil
+	for _, d := range ds {
+		undo = append(undo, DraftRef{d.Kind, d.PolicyID, d.Revision})
+	}
+	must(s.PublishPolicyBatch(ctx, undo, "admin"))
+	b, matched, e = s.SelectPolicy(ctx, "192.0.2.1", PolicyRequest{Protocol: "pap"})
+	must(e)
+	if !matched || b == nil || b.VLAN != 200 {
+		t.Fatal("restore failed", b)
+	}
+	set, e := s.NASPolicies(ctx, "192.0.2.1")
+	must(e)
+	if set.Version <= 1 {
+		t.Fatal("NAS version reused", set.Version)
+	}
+
 }
 func TestBatchLateFailureAndRevisionConflict(t *testing.T) {
 	s := ruleStore(t)

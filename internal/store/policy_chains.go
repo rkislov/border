@@ -185,7 +185,10 @@ func (s *Store) saveNASPoliciesTx(ctx context.Context, tx *sql.Tx, set NASPolicy
 	if version != set.Version {
 		return fmt.Errorf("policy set changed; reload before saving")
 	}
-	set.Version++
+	set.Version, err = s.nextConfigurationVersion(ctx, tx, "nas-policies", set.NAS, version)
+	if err != nil {
+		return err
+	}
 	raw, err := json.Marshal(set)
 	if err != nil {
 		return err
