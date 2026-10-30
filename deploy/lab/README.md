@@ -56,3 +56,10 @@ PID/счётчике перезапуска и повторить RADIUS-вхо�
 ```sh
 python3 -m unittest discover -s deploy/lab -p 'test_*.py'
 ```
+
+## Следующий физический NAS
+
+Подготовлен [сценарий Netcraze Ultra](../../docs/NETCRAZE-LAB.md) с отдельными
+SSID, сегментом и портом. Поддержка проводного authenticator, accounting и
+Disconnect для WPA-Enterprise должна быть подтверждена на устройстве;
+лабораторный эмулятор этого не доказывает.
