@@ -36,12 +36,13 @@ async function load() {
  await loadFingerprints();
  await loadFingerbank();
  await loadAccessModel();
+ await loadPolicyDrafts();
  await loadTenants();
  await loadRetention();
   const eapResponse=await scopedFetch('/api/eap');if(eapResponse.ok){const ep=await eapResponse.json();$('#eap-form').elements.Enabled.checked=ep.Enabled;$('#eap-form').elements.VLAN.value=ep.VLAN;$('#eap-status').textContent=ep.Available?'Используются управляемые CA из раздела сертификатов.':'Для EAP-TLS задайте BORDER_MASTER_KEY и перезапустите radiusd.';}
  } catch(e) { notice(e.message, true); }
 }
-async function mutate(url, data) { try { const r = await scopedFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify(data) }); if (!r.ok) throw new Error(await r.text()); notice('Изменения сохранены'); await load(); return true; } catch(e) { notice(e.message, true); return false; } }
+async function mutate(url, data) { const policyKinds={"/api/authentication-policies":"authentication","/api/access-policies":"access","/api/access-rules":"rules"}; if(policyKinds[url])return savePolicyDraft(policyKinds[url],data); try { const r = await scopedFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify(data) }); if (!r.ok) throw new Error(await r.text()); notice('Изменения сохранены'); await load(); return true; } catch(e) { notice(e.message, true); return false; } }
 const navButtons=[...document.querySelectorAll('nav button[data-view]')];
 function activateView(name,updateURL=false){const button=navButtons.find(b=>b.dataset.view===name && !b.hidden);if(!button)return;document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==name);for(const b of navButtons){const selected=b===button;b.classList.toggle('selected',selected);if(selected)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}const group=button.closest('.nav-group');if(group)group.open=true;$('#breadcrumb').textContent=button.dataset.path+' / '+button.textContent.trim();if(updateURL)history.replaceState(null,'','#'+name);window.scrollTo({top:0,behavior:'instant'});}
 navButtons.forEach(b=>b.onclick=()=>activateView(b.dataset.view,true));
@@ -121,7 +122,7 @@ async function loadFingerbank(){try{const r=await scopedFetch('/api/fingerbank/c
 $('#fingerbank-form').onsubmit=async e=>{e.preventDefault();const f=e.target;await mutate('/api/fingerbank/config',{Enabled:f.elements.Enabled.checked,Key:f.elements.Key.value,TTLHours:Number(f.elements.TTLHours.value)});};
 async function lookupFingerbank(mac){try{const r=await scopedFetch('/api/fingerbank/lookup',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({MAC:mac})});if(!r.ok)throw new Error(await r.text());const v=await r.json(),n=$('#fingerbank-result');n.hidden=false;n.textContent=mac+': '+(v.NotFound?'Не определено':v.DeviceName+' · достоверность '+v.Score+'/100')+' · '+(v.Stale?'Устаревший кэш':v.Cached?'Из кэша':'Получено из API')+' · '+date(v.UpdatedAt);}catch(e){notice(e.message,true);}}
 
-function fillForm(id,data){if(id==='#authentication-form' && !data.Steps?.length)data={...data,Steps:data.RequireTOTP?['primary','totp']:['primary']};const form=$(id);for(const [key,value] of Object.entries(data)){const input=form.elements[key];if(!input)continue;if(input.type==='checkbox')input.checked=!!value;else if(input.type==='datetime-local')input.value=value?new Date(value*1000-new Date(value*1000).getTimezoneOffset()*60000).toISOString().slice(0,16):'';else input.value=Array.isArray(value)?value.join('\n'):(value??'');}if(id==='#nas-form')showDictionary();form.scrollIntoView({behavior:'smooth',block:'start'});}
+function fillForm(id,data){const kind=id==='#authentication-form'?'authentication':id==='#access-form'?'access':'';if(kind){const draft=policyDraftCache.find(d=>d.Kind===kind&&d.PolicyID===data.ID);if(draft)data=structuredClone(draft.Payload);}if(id==='#authentication-form' && !data.Steps?.length)data={...data,Steps:data.RequireTOTP?['primary','totp']:['primary']};const form=$(id);for(const [key,value] of Object.entries(data)){const input=form.elements[key];if(!input)continue;if(input.type==='checkbox')input.checked=!!value;else if(input.type==='datetime-local')input.value=value?new Date(value*1000-new Date(value*1000).getTimezoneOffset()*60000).toISOString().slice(0,16):'';else input.value=Array.isArray(value)?value.join('\n'):(value??'');}if(id==='#nas-form')showDictionary();form.scrollIntoView({behavior:'smooth',block:'start'});}
 function editableTable(target,heads,items,columns,form){table(target,heads,items.map(columns));for(const item of items){const b=document.createElement('button');b.type='button';b.textContent='Изменить '+(item.Name||item.Username||item.ID||((item.NAS||item.LocationID)+" / "+item.SegmentID));b.onclick=()=>fillForm(form,item);$(target).append(b);}}
 function selectItems(selector,items){document.querySelectorAll(selector).forEach(s=>{const old=s.value,first=s.options[0]?.value===''?s.options[0].cloneNode(true):null;s.replaceChildren();if(first)s.add(first);items.forEach(v=>s.add(new Option(v.Name+' · '+v.ID,v.ID)));if([...s.options].some(o=>o.value===old))s.value=old;});}
 function renderSetup(model){
@@ -165,7 +166,7 @@ function renderRuleModel(model){
  editableTable('#user-group-list',['ID','Название','Участники','Состояние'],model.Groups,g=>[g.ID,g.Name,g.Members.join(', '),g.Enabled?'Включена':'Выключена'],'#user-group-form');
  ruleSets=model.RuleSets;selectItems('.rule-policy-select',model.Access);if(!rulesDirty)selectRuleDraft();
 }
-function selectRuleDraft(){const id=$('#rule-policy').value;ruleDraft=id?structuredClone(ruleSets.find(r=>r.PolicyID===id)||{PolicyID:id,Version:0,Enabled:false,Rules:[]}):null;rulesDirty=false;renderRuleDraft();}
+function selectRuleDraft(){const id=$('#rule-policy').value;ruleDraft=id?structuredClone(policyDraftCache.find(d=>d.Kind==='rules'&&d.PolicyID===id)?.Payload||ruleSets.find(r=>r.PolicyID===id)||{PolicyID:id,Version:0,Enabled:false,Rules:[]}):null;rulesDirty=false;renderRuleDraft();}
 function renderRuleDraft(){
  $('#rules-enabled').checked=!!ruleDraft?.Enabled;$('#save-rules').disabled=!ruleDraft;
  $('#rules-status').textContent=!ruleDraft?'Выберите политику':rulesDirty?'Черновик изменён, изменения ещё не применены.':'Версия набора: '+ruleDraft.Version;

@@ -51,6 +51,24 @@ func TestAccessFormsAndScopedNotificationAPI(t *testing.T) {
 		if w := send("POST", "/api/"+v.path, v.body, csrf); w.Code != 200 {
 			t.Fatal(v.path, w.Code, w.Body.String())
 		}
+		if kind := map[string]string{"authentication-policies": "authentication", "access-policies": "access", "access-rules": "rules"}[v.path]; kind != "" {
+			var payload map[string]any
+			json.Unmarshal([]byte(v.body), &payload)
+			id, _ := payload["ID"].(string)
+			if id == "" {
+				id, _ = payload["PolicyID"].(string)
+			}
+			body, _ := json.Marshal(map[string]any{"Kind": kind, "PolicyID": id, "Revision": 1})
+			if w := send("POST", "/api/policy-drafts/publish", string(body), ""); w.Code != 403 {
+				t.Fatal("publish CSRF", w.Code)
+			}
+			if w := send("GET", "/api/policy-drafts/impact?kind="+kind+"&id="+id, "", ""); w.Code != 200 {
+				t.Fatal("impact", w.Code, w.Body.String())
+			}
+			if w := send("POST", "/api/policy-drafts/publish", string(body), csrf); w.Code != 200 {
+				t.Fatal("publish", w.Code, w.Body.String())
+			}
+		}
 	}
 	for _, path := range []string{"/api/access-model", "/api/notifications?scope=corp", "/api/nas-policies?nas=192.0.2.1"} {
 		w := send("GET", path, "", "")

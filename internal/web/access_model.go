@@ -9,6 +9,7 @@ import (
 
 func (a *app) accessRoutes(m *http.ServeMux) {
 	a.retentionRoutes(m)
+	a.policyDraftRoutes(m)
 	m.HandleFunc("POST /api/policy-diagnostic", a.policyDiagnostic)
 	m.HandleFunc("GET /api/access-model", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -90,14 +91,14 @@ func (a *app) accessRoutes(m *http.ServeMux) {
 		if !decode(w, r, &c) {
 			return
 		}
-		a.finish(w, r, a.s.SaveRules(r.Context(), c), "save ordered access rules")
+		a.stagePolicy(w, r, "rules", c.PolicyID, c)
 	})
 	m.HandleFunc("POST /api/authentication-policies", func(w http.ResponseWriter, r *http.Request) {
 		var v store.AuthenticationPolicy
 		if !decode(w, r, &v) {
 			return
 		}
-		a.finish(w, r, a.s.SaveAuthentication(r.Context(), v), "save authentication policy")
+		a.stagePolicy(w, r, "authentication", v.ID, v)
 	})
 	m.HandleFunc("POST /api/access-policies", func(w http.ResponseWriter, r *http.Request) {
 		var v store.AccessPolicy
@@ -107,7 +108,7 @@ func (a *app) accessRoutes(m *http.ServeMux) {
 		for i := range v.Subjects {
 			v.Subjects[i] = strings.ToLower(strings.TrimSpace(v.Subjects[i]))
 		}
-		a.finish(w, r, a.s.SaveAccess(r.Context(), v), "save access policy")
+		a.stagePolicy(w, r, "access", v.ID, v)
 	})
 	m.HandleFunc("POST /api/segment-mappings", func(w http.ResponseWriter, r *http.Request) {
 		var v store.SegmentMapping

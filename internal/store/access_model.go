@@ -106,6 +106,17 @@ func (p BoundPolicy) Grant() radprofile.Grant {
 }
 
 func (s *Store) SaveAuthentication(ctx context.Context, a AuthenticationPolicy) error {
+	tx, err := s.policyTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.saveAuthenticationTx(ctx, tx, a); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Store) saveAuthenticationTx(ctx context.Context, tx *sql.Tx, a AuthenticationPolicy) error {
 	if !regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`).MatchString(a.ID) || a.Name == "" || len(a.Name) > 100 {
 		return fmt.Errorf("policy ID and name required")
 	}
@@ -137,7 +148,8 @@ func (s *Store) SaveAuthentication(ctx context.Context, a AuthenticationPolicy) 
 	} else if a.DomainID != "" {
 		return fmt.Errorf("domain only applies to directory authentication")
 	}
-	return s.Exec(ctx, "INSERT INTO authentication_policies(id,name,source,domain_id,require_totp,enabled,steps,eap_method) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,source=excluded.source,domain_id=excluded.domain_id,require_totp=excluded.require_totp,enabled=excluded.enabled,steps=excluded.steps,eap_method=excluded.eap_method", a.ID, a.Name, a.Source, domain, integer(a.RequireTOTP), integer(a.Enabled), string(steps), a.EAPMethod)
+	_, err := tx.ExecContext(ctx, s.SQL("INSERT INTO authentication_policies(id,name,source,domain_id,require_totp,enabled,steps,eap_method) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,source=excluded.source,domain_id=excluded.domain_id,require_totp=excluded.require_totp,enabled=excluded.enabled,steps=excluded.steps,eap_method=excluded.eap_method"), a.ID, a.Name, a.Source, domain, integer(a.RequireTOTP), integer(a.Enabled), string(steps), a.EAPMethod)
+	return err
 }
 func integer(b bool) int {
 	if b {
@@ -146,6 +158,17 @@ func integer(b bool) int {
 	return 0
 }
 func (s *Store) SaveAccess(ctx context.Context, a AccessPolicy) error {
+	tx, err := s.policyTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.saveAccessTx(ctx, tx, a); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Store) saveAccessTx(ctx context.Context, tx *sql.Tx, a AccessPolicy) error {
 	if !regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`).MatchString(a.ID) || a.Name == "" || len(a.Name) > 100 || a.AuthenticationID == "" || a.SessionSeconds < 60 || a.SessionSeconds > 86400 || a.IdleSeconds < 0 || a.IdleSeconds > 86400 || a.ValidFrom < 0 || a.ValidUntil < 0 || (a.ValidUntil != 0 && a.ValidUntil <= a.ValidFrom) {
 		return fmt.Errorf("invalid access policy or validity period")
 	}
@@ -171,18 +194,13 @@ func (s *Store) SaveAccess(ctx context.Context, a AccessPolicy) error {
 		return fmt.Errorf("maximum 1000 explicit identities")
 	}
 	var source, method string
-	if err := s.Row(ctx, "SELECT source,eap_method FROM authentication_policies WHERE id=?", a.AuthenticationID).Scan(&source, &method); err != nil {
+	if err := tx.QueryRowContext(ctx, s.SQL("SELECT source,eap_method FROM authentication_policies WHERE id=?"), a.AuthenticationID).Scan(&source, &method); err != nil {
 		return fmt.Errorf("authentication policy required")
 	}
 	if a.Mode != "network" && (source == "mab" || source == "eap_tls" || method != "") {
 		return fmt.Errorf("SSH/VPN policy currently requires PAP authentication")
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, s.SQL("INSERT INTO access_policies(id,name,authentication_id,mode,segment_id,valid_from,valid_until,session_seconds,idle_seconds,privilege,group_name,role,filter_id,enabled) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,authentication_id=excluded.authentication_id,mode=excluded.mode,segment_id=excluded.segment_id,valid_from=excluded.valid_from,valid_until=excluded.valid_until,session_seconds=excluded.session_seconds,idle_seconds=excluded.idle_seconds,privilege=excluded.privilege,group_name=excluded.group_name,role=excluded.role,filter_id=excluded.filter_id,enabled=excluded.enabled"), a.ID, a.Name, a.AuthenticationID, a.Mode, segment, a.ValidFrom, a.ValidUntil, a.SessionSeconds, a.IdleSeconds, a.Privilege, a.Group, a.Role, a.Filter, integer(a.Enabled))
+	_, err := tx.ExecContext(ctx, s.SQL("INSERT INTO access_policies(id,name,authentication_id,mode,segment_id,valid_from,valid_until,session_seconds,idle_seconds,privilege,group_name,role,filter_id,enabled) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,authentication_id=excluded.authentication_id,mode=excluded.mode,segment_id=excluded.segment_id,valid_from=excluded.valid_from,valid_until=excluded.valid_until,session_seconds=excluded.session_seconds,idle_seconds=excluded.idle_seconds,privilege=excluded.privilege,group_name=excluded.group_name,role=excluded.role,filter_id=excluded.filter_id,enabled=excluded.enabled"), a.ID, a.Name, a.AuthenticationID, a.Mode, segment, a.ValidFrom, a.ValidUntil, a.SessionSeconds, a.IdleSeconds, a.Privilege, a.Group, a.Role, a.Filter, integer(a.Enabled))
 	if err != nil {
 		return err
 	}
@@ -197,7 +215,7 @@ func (s *Store) SaveAccess(ctx context.Context, a AccessPolicy) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 func (s *Store) Authentications(ctx context.Context) ([]AuthenticationPolicy, error) {
 	rows, err := s.DB.QueryContext(ctx, "SELECT id,name,source,COALESCE(domain_id,''),require_totp,enabled,steps,eap_method FROM authentication_policies ORDER BY name")
