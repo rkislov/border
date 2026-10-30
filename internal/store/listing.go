@@ -9,9 +9,9 @@ import (
 )
 
 type ListFilter struct {
-	Query, Status, Result string
-	From, Until           int64
-	Page, Limit           int
+	Query, Status, Result, Authorization string
+	From, Until                          int64
+	Page, Limit                          int
 }
 type ListPage[T any] struct {
 	Items       []T
@@ -22,6 +22,9 @@ type ListPage[T any] struct {
 func (f ListFilter) Validate() error {
 	if len(f.Query) > 200 || len(f.Result) > 80 || f.Page < 1 || f.Page > 1000000 || f.Limit < 1 || f.Limit > 200 || f.From < 0 || f.Until < 0 || (f.From > 0 && f.Until > 0 && f.From > f.Until) {
 		return fmt.Errorf("invalid pagination or filters")
+	}
+	if f.Authorization != "" && f.Authorization != "linked" && f.Authorization != "unlinked" {
+		return fmt.Errorf("invalid authorization filter")
 	}
 	switch f.Status {
 	case "", "active", "stale", "stopped", "nas-on", "nas-off", "disconnect-ack":
@@ -51,6 +54,13 @@ func listWhere(f ListFilter, session bool) (string, []any) {
 	if session && f.Status != "" {
 		clauses = append(clauses, "s.status=?")
 		args = append(args, f.Status)
+	}
+	if session && f.Authorization != "" {
+		condition := "EXISTS(SELECT 1 FROM access_grants ag WHERE ag.token=s.grant_token AND ag.nas=s.nas)"
+		if f.Authorization == "unlinked" {
+			condition = "NOT " + condition
+		}
+		clauses = append(clauses, condition)
 	}
 	if !session && f.Result != "" {
 		clauses = append(clauses, "result=?")
@@ -104,14 +114,14 @@ func (s *Store) SessionsPage(ctx context.Context, f ListFilter) (ListPage[Sessio
 	last := max(1, int((page.Total+int64(f.Limit)-1)/int64(f.Limit)))
 	page.Page = min(f.Page, last)
 	args = append(args, f.Limit, (page.Page-1)*f.Limit)
-	rows, err := s.DB.QueryContext(ctx, s.SQL("SELECT s.nas,s.session_id,s.mac,s.username,s.status,s.updated_at,COALESCE(g.reason,''),s.revoke_attempts,s.generation,s.last_seen,s.event_at,s.started_at,s.session_seconds,s.revoke_next,s.revoke_last,s.revoke_cause,s.revoke_response,s.revoke_error,s.input_bytes,s.output_bytes,s.input_gigawords,s.output_gigawords,s.traffic_warning FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas WHERE "+where+" ORDER BY s.updated_at DESC,s.nas,s.session_id LIMIT ? OFFSET ?"), args...)
+	rows, err := s.DB.QueryContext(ctx, s.SQL("SELECT s.nas,s.session_id,s.mac,s.username,s.status,s.updated_at,COALESCE(g.reason,''),s.revoke_attempts,s.generation,s.last_seen,s.event_at,s.started_at,s.session_seconds,s.revoke_next,s.revoke_last,s.revoke_cause,s.revoke_response,s.revoke_error,s.input_bytes,s.output_bytes,s.input_gigawords,s.output_gigawords,s.traffic_warning,g.token IS NOT NULL,COALESCE(g.policy_id,'') FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas WHERE "+where+" ORDER BY s.updated_at DESC,s.nas,s.session_id LIMIT ? OFFSET ?"), args...)
 	if err != nil {
 		return page, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var v Session
-		if err = rows.Scan(&v.NAS, &v.ID, &v.MAC, &v.Username, &v.Status, &v.Updated, &v.RevocationReason, &v.RevocationAttempts, &v.Generation, &v.LastSeen, &v.EventAt, &v.StartedAt, &v.SessionSeconds, &v.RevocationNext, &v.RevocationLast, &v.RevocationCause, &v.RevocationResponse, &v.RevocationError, &v.InputBytes, &v.OutputBytes, &v.InputGigawords, &v.OutputGigawords, &v.TrafficWarning); err != nil {
+		if err = rows.Scan(&v.NAS, &v.ID, &v.MAC, &v.Username, &v.Status, &v.Updated, &v.RevocationReason, &v.RevocationAttempts, &v.Generation, &v.LastSeen, &v.EventAt, &v.StartedAt, &v.SessionSeconds, &v.RevocationNext, &v.RevocationLast, &v.RevocationCause, &v.RevocationResponse, &v.RevocationError, &v.InputBytes, &v.OutputBytes, &v.InputGigawords, &v.OutputGigawords, &v.TrafficWarning, &v.AuthorizationLinked, &v.AccessPolicyID); err != nil {
 			return page, err
 		}
 		page.Items = append(page.Items, v)

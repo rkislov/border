@@ -25,7 +25,7 @@ func TestListingAPI(t *testing.T) {
 			query string
 			auth  bool
 			code  int
-		}{{"", false, 401}, {"?page=1&limit=25", true, 200}, {"?page=0", true, 400}, {"?limit=201", true, 400}, {"?from=200&until=100", true, 400}, {"?from=abc", true, 400}, {"?status=invalid", true, 400}} {
+		}{{"", false, 401}, {"?page=1&limit=25", true, 200}, {"?page=0", true, 400}, {"?limit=201", true, 400}, {"?from=200&until=100", true, 400}, {"?from=abc", true, 400}, {"?status=invalid", true, 400}, {"?authorization=invalid", true, 400}, {"?authorization=unlinked", true, 200}} {
 			r := httptest.NewRequest("GET", "https://localhost/api/"+kind+test.query, nil)
 			if test.auth {
 				r.SetBasicAuth("admin", "strong-password-123")
