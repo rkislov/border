@@ -5,6 +5,7 @@ package web
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/rkislov/border/internal/store"
 	"net"
 	"net/http"
 	"time"
@@ -15,22 +16,32 @@ type loginAttempt struct {
 	Since time.Time
 }
 
-func (a *app) authenticated(r *http.Request) bool {
+type adminSession struct {
+	Username string
+	Revision int64
+	Expires  time.Time
+}
+
+func (a *app) principal(r *http.Request) (store.AdminAccount, bool) {
 	if cookie, err := r.Cookie("border_admin"); err == nil {
 		a.mu.Lock()
-		expiry, ok := a.sessions[cookie.Value]
-		if ok && time.Now().After(expiry) {
+		session, ok := a.sessions[cookie.Value]
+		if ok && time.Now().After(session.Expires) {
 			delete(a.sessions, cookie.Value)
 			ok = false
 		}
 		a.mu.Unlock()
 		if ok {
-			return true
+			p, err := a.s.AdminAccount(r.Context(), session.Username)
+			if err == nil && p.Enabled && p.Revision == session.Revision {
+				return p, true
+			}
+			return store.AdminAccount{}, false
 		}
 	}
 	user, password, ok := r.BasicAuth()
 	if !ok {
-		return false
+		return store.AdminAccount{}, false
 	}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	now := time.Now()
@@ -42,9 +53,9 @@ func (a *app) authenticated(r *http.Request) bool {
 	blocked := v.Count >= 10 || len(a.attempts) > 10000
 	a.mu.Unlock()
 	if blocked {
-		return false
+		return store.AdminAccount{}, false
 	}
-	valid := a.s.CheckAdmin(r.Context(), user, password)
+	p, valid := a.s.AuthenticateAdmin(r.Context(), user, password)
 	if !valid {
 		a.mu.Lock()
 		v = a.attempts[ip]
@@ -55,7 +66,10 @@ func (a *app) authenticated(r *http.Request) bool {
 		a.attempts[ip] = v
 		a.mu.Unlock()
 	}
-	return valid
+	if !valid {
+		return store.AdminAccount{}, false
+	}
+	return p, true
 }
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" && origin != "https://"+r.Host {
@@ -90,7 +104,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &v) {
 		return
 	}
-	valid := a.s.CheckAdmin(r.Context(), v.Username, v.Password)
+	account, valid := a.s.AuthenticateAdmin(r.Context(), v.Username, v.Password)
 	v.Password = ""
 	if !valid {
 		http.Error(w, "неверный логин или пароль", 401)
@@ -104,7 +118,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	id := hex.EncodeToString(raw)
 	a.mu.Lock()
 	for key, expiry := range a.sessions {
-		if now.After(expiry) {
+		if now.After(expiry.Expires) {
 			delete(a.sessions, key)
 		}
 	}
@@ -113,7 +127,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "busy", 503)
 		return
 	}
-	a.sessions[id] = now.Add(30 * time.Minute)
+	a.sessions[id] = adminSession{Username: account.Username, Revision: account.Revision, Expires: now.Add(30 * time.Minute)}
 	a.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "border_admin", Value: id, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 1800})
 	_ = a.s.Audit(r.Context(), "web", v.Username, "login", "admin password login")

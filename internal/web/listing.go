@@ -35,6 +35,13 @@ func (a *app) listRoutes(m *http.ServeMux) {
 					*dst = n
 				}
 			}
+			if p := requestAccount(r); p.Role == "operator" {
+				if p.LocationID == "" {
+					http.Error(w, "location required", 403)
+					return
+				}
+				f.LocationID = p.LocationID
+			}
 			if err := f.Validate(); err != nil {
 				http.Error(w, err.Error(), 400)
 				return

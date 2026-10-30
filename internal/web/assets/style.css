@@ -19,3 +19,5 @@ aside nav{display:block}nav button[data-view]{width:100%}nav .nav-group>summary{
 .portal-sso{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}.portal-sso[hidden]{display:none}.portal-sso p{flex-basis:100%;margin:0}.portal-sso button{padding:10px;border:1px solid #cad6d0;border-radius:8px;background:#f2f5f3;color:#65766d;cursor:not-allowed}
 
 .portal-methods{display:grid;gap:12px;margin:24px 0}.portal-methods[hidden]{display:none}.portal-methods button{padding:16px 24px;border:1px solid #285b48;border-radius:10px;background:#285b48;color:white;font:inherit;cursor:pointer}
+
+main.operations{margin:0 auto;width:100%;max-width:1400px;padding:32px 24px}.operations button{padding:10px 16px;border-radius:6px;background:#245542;color:white;margin:6px}.operations button:disabled{opacity:.4;cursor:default}.operations input{padding:10px;max-width:100%}.operations #results{margin-top:24px}
