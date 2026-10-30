@@ -109,6 +109,10 @@ func runTunneledEAPOL(t *testing.T, domain *identitysource.Domain, username, pas
 					t.Fatalf("domain LDAP preflight: %v", err)
 				}
 			}
+			var sessions *tunnelSessions
+			if domain != nil {
+				sessions = newTunnelSessions(t, s, o.Identities, source+"/"+username)
+			}
 			dir := t.TempDir()
 			if err := pki.Generate(dir, "radius.example.test"); err != nil {
 				t.Fatal(err)
@@ -147,6 +151,7 @@ func runTunneledEAPOL(t *testing.T, domain *identitysource.Domain, username, pas
 			}
 			if domain != nil {
 				cases = append(cases,
+					attempt{"blocked-ldap-down", password, "radius.example.test", false},
 					attempt{"unblocked", password, "radius.example.test", true},
 					attempt{"ldap-down", password, "radius.example.test", false},
 					attempt{"ldap-restored", password, "radius.example.test", true})
@@ -161,6 +166,8 @@ func runTunneledEAPOL(t *testing.T, domain *identitysource.Domain, username, pas
 					switch tc.name {
 					case "blocked", "ldap-down":
 						fault(tc.name)
+					case "blocked-ldap-down":
+						fault("ldap-down")
 					case "unblocked", "ldap-restored":
 						fault("reset")
 					}
@@ -177,6 +184,9 @@ func runTunneledEAPOL(t *testing.T, domain *identitysource.Domain, username, pas
 					if err = s.Exec(ctx, "UPDATE access_policies SET valid_until=?", time.Now().Unix()-1); err != nil {
 						t.Fatal(err)
 					}
+				}
+				if sessions != nil {
+					sessions.check(ctx, tc.name)
 				}
 				inner := "auth=MSCHAPV2"
 				if method == "ttls" {
@@ -214,6 +224,9 @@ func runTunneledEAPOL(t *testing.T, domain *identitysource.Domain, username, pas
 				}
 				if after != expected {
 					t.Fatalf("%s: grants before=%d after=%d expected=%d", tc.name, before, after, expected)
+				}
+				if sessions != nil && tc.success {
+					sessions.attach(ctx, tc.name)
 				}
 				t.Logf("%s: success=%v; grant delta=%d", tc.name, success, after-before)
 				clear(out)
