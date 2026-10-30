@@ -17,6 +17,14 @@ func (a *app) stagePolicy(w http.ResponseWriter, r *http.Request, kind, id strin
 	a.finishPolicy(w, r, err, "save policy draft "+kind+"/"+id)
 }
 func (a *app) policyDraftRoutes(m *http.ServeMux) {
+	m.HandleFunc("POST /api/policy-drafts/maintenance", func(w http.ResponseWriter, r *http.Request) {
+		var v store.PublicationWindowSettings
+		if !decode(w, r, &v) {
+			return
+		}
+		a.finishPolicy(w, r, a.s.SavePublicationWindows(r.Context(), v, requestAccount(r).Username), "update publication maintenance windows")
+	})
+
 	m.HandleFunc("POST /api/policy-drafts/schedules", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
 			ReviewID string
@@ -139,7 +147,12 @@ func (a *app) policyDraftRoutes(m *http.ServeMux) {
 			http.Error(w, "schedules unavailable", 503)
 			return
 		}
-		reply(w, map[string]any{"Schedules": schedules, "Drafts": drafts, "Releases": releases, "ReviewSettings": settings, "Reviews": reviews, "Username": requestAccount(r).Username})
+		windows, e := a.s.PublicationWindows(r.Context())
+		if e != nil {
+			http.Error(w, "maintenance settings unavailable", 503)
+			return
+		}
+		reply(w, map[string]any{"Maintenance": windows, "Schedules": schedules, "Drafts": drafts, "Releases": releases, "ReviewSettings": settings, "Reviews": reviews, "Username": requestAccount(r).Username})
 	})
 	m.HandleFunc("POST /api/policy-drafts", func(w http.ResponseWriter, r *http.Request) {
 		var d store.PolicyDraft
@@ -184,6 +197,14 @@ func (a *app) finishPolicy(w http.ResponseWriter, r *http.Request, err error, ac
 	if err != nil {
 		message := "Не удалось сохранить политику. Проверьте поля и ссылки на существующие объекты."
 		switch {
+		case strings.HasPrefix(err.Error(), "maintenance:"):
+			message = "Проверьте часовой пояс, дни, интервалы и допустимую задержку (от минуты до 7 суток)."
+			if strings.Contains(err.Error(), "outside allowed") {
+				message = "Сейчас публикация запрещена окном обслуживания. Выберите разрешённое время или запланируйте пакет."
+			}
+			if strings.Contains(err.Error(), "changed") {
+				message = "Настройки окон изменились. Обновите страницу."
+			}
 		case strings.HasPrefix(err.Error(), "schedule:"):
 			message = "Выберите будущее время в пределах года. Если расписание уже существует, сначала отмените его; обновите список перед повторной попыткой."
 		case strings.HasPrefix(err.Error(), "approval:"):
