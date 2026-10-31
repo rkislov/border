@@ -81,7 +81,11 @@ func fixture(t *testing.T) (Config, *store.Store) {
 }
 
 func TestEncryptedRecoveryIncludesAllTenantsAndKeys(t *testing.T) {
-	c, _ := fixture(t)
+	c, s := fixture(t)
+	// Disabling browser notifications intentionally clears the encrypted destination.
+	if e := s.Exec(t.Context(), "INSERT INTO policy_notification_targets(id,username,channel,scope,destination,enabled,revision) VALUES('admin:push','admin','push','default','',0,1)"); e != nil {
+		t.Fatal(e)
+	}
 	p := filepath.Join(c.OutputDir, "test.age")
 	r, e := Create(t.Context(), c, p)
 	if e != nil {

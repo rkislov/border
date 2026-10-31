@@ -198,7 +198,7 @@ func checkDatabase(ctx context.Context, path string, key []byte) (int, error) {
 		"SELECT 'routeros:' || nas,config FROM nas_routeros",
 		"SELECT 'guest:' || id,phone_cipher FROM guest_challenges",
 		"SELECT 'push:' || username || ':' || endpoint_hash,subscription FROM push_subscriptions",
-		"SELECT 'policy-push:' || username,destination FROM policy_notification_targets WHERE channel='push'",
+		"SELECT 'policy-push:' || username,destination FROM policy_notification_targets WHERE channel='push' AND (enabled=1 OR destination<>'')",
 		"SELECT CASE WHEN name='fingerbank_config' THEN 'fingerbank:config' WHEN name='sms_config' THEN 'sms:config' WHEN name LIKE 'acme-cache:%' THEN 'acme:' || substr(name,12) ELSE name END,value FROM settings WHERE value<>'' AND (name IN ('fingerbank_config','sms_config') OR name LIKE 'notifications:%' OR name LIKE 'acme-cache:%')",
 	}
 	for _, q := range queries {
