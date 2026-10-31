@@ -58,6 +58,44 @@ func masterKey(path string) ([]byte, error) {
 	return key, nil
 }
 
+// Refuse stale SQLite backup configuration after an environment-driven database move.
+// Never include a DSN in the error: PostgreSQL URLs can contain credentials.
+func checkSourceEnvironment(c Config) error {
+	f, e := regularFile(c.EnvFile)
+	if e != nil {
+		return e
+	}
+	defer f.Close()
+	scan := bufio.NewScanner(f)
+	for scan.Scan() {
+		line := strings.TrimPrefix(strings.TrimSpace(scan.Text()), "export ")
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if len(v) > 1 && ((v[0] == '\'' && v[len(v)-1] == '\'') || (v[0] == '"' && v[len(v)-1] == '"')) {
+			v = v[1 : len(v)-1]
+		}
+		switch k {
+		case "BORDER_DB_DRIVER":
+			if v != "" && v != "sqlite" {
+				return errors.New("backup supports SQLite only; configured database driver differs")
+			}
+		case "BORDER_DB":
+			if v != "" && v != c.RootDB {
+				return errors.New("backup RootDB differs from BORDER_DB; use the same absolute path")
+			}
+		case "BORDER_TENANT_DIR":
+			if v != "" && v != c.TenantDir {
+				return errors.New("backup TenantDir differs from BORDER_TENANT_DIR; use the same absolute path")
+			}
+		}
+	}
+	return scan.Err()
+}
+
 func checkRecovery(ctx context.Context, dir string, m Manifest) (Report, error) {
 	r := Report{Files: len(m.Files)}
 	sources := map[string]string{}

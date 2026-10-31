@@ -164,6 +164,9 @@ func Create(ctx context.Context, c Config, destination string) (Report, error) {
 	if err := c.Validate(); err != nil {
 		return report, err
 	}
+	if err := checkSourceEnvironment(c); err != nil {
+		return report, err
+	}
 	if filepath.Dir(destination) != c.OutputDir {
 		return report, errors.New("archive must be in OutputDir")
 	}
