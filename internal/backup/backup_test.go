@@ -177,6 +177,22 @@ func TestRecoveryValidatesArchivedMasterKey(t *testing.T) {
 	}
 }
 
+func TestStaleDatabaseConfigurationIsRejected(t *testing.T) {
+	c, _ := fixture(t)
+	original, e := os.ReadFile(c.EnvFile)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, entry := range []string{"BORDER_DB_DRIVER=pgx", "BORDER_DB=/different/database.db", "BORDER_TENANT_DIR=/different/tenants"} {
+		if e = os.WriteFile(c.EnvFile, append(append([]byte{}, original...), []byte(entry+"\n")...), 0600); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = Create(t.Context(), c, filepath.Join(c.OutputDir, "stale.age")); e == nil {
+			t.Fatal("stale source configuration accepted", entry)
+		}
+	}
+}
+
 func TestSnapshotIncludesUncheckpointedWALAndDoesNotClobber(t *testing.T) {
 	d := t.TempDir()
 	s, e := store.Open("sqlite", filepath.Join(d, "live.db"))
