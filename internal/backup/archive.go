@@ -41,6 +41,7 @@ type Manifest struct {
 	Files      []File
 }
 type Report struct {
+	SHA256     string
 	VerifiedAt int64
 	Databases  int
 	Tenants    int
@@ -467,6 +468,12 @@ func extractAndVerify(ctx context.Context, archive, key, dir string, maxBytes in
 	info, err := f.Stat()
 	if err == nil {
 		r.Bytes = info.Size()
+	}
+	if err == nil {
+		_, err = f.Seek(0, io.SeekStart)
+		if err == nil {
+			r.SHA256, _, err = hashReader(ctx, f)
+		}
 	}
 	return r, err
 }

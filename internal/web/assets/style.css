@@ -49,3 +49,5 @@ main.operations{margin:0 auto;width:100%;max-width:1400px;padding:32px 24px}.ope
 #change-journal .panel{overflow-wrap:anywhere}#change-journal button:not(.primary){padding:9px 14px;border-radius:6px;background:#e7eee9;color:#234f3d}#change-detail{scroll-margin-top:20px}#change-detail details{margin:20px 0}
 
 .publication-result{margin:24px 0;padding:22px;border:1px solid #b8cfc4;border-radius:10px;background:#f4f8f5}.publication-result h4{margin:12px 0}.publication-result details{margin-top:24px}
+
+.backup-download-link{display:inline-block;margin:8px 12px 8px 0;padding:10px 14px;border-radius:6px;background:#e7eee9;color:#234f3d;font-weight:600;text-decoration:none}.backup-download-link:hover{text-decoration:underline}#backups button:not(.primary){padding:10px 14px;border-radius:6px;background:#e7eee9;color:#234f3d}#backups .draft-entry p{overflow-wrap:anywhere}

@@ -34,6 +34,13 @@ func backupCommand() *cobra.Command {
 	}
 	init := &cobra.Command{Use: "init-key PATH", Short: "Создать отдельный ключ архива (без перезаписи и вывода секрета)", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error { return backup.InitIdentity(args[0]) }}
 	b.AddCommand(init)
+	b.AddCommand(&cobra.Command{Use: "init-file-export", Short: "Привязать существующую сетевую папку к назначению FileExport", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+		v, e := backup.LoadConfig(config)
+		if e != nil {
+			return e
+		}
+		return backup.InitFileExport(v)
+	}})
 	for _, name := range []string{"verify", "restore"} {
 		name := name
 		cmd := &cobra.Command{Use: name + " ARCHIVE", Short: map[string]string{"verify": "Расшифровать и проверить восстановление во временном каталоге", "restore": "Восстановить в НОВЫЙ каталог; работающий сервер не изменяется"}[name], Args: cobra.ExactArgs(1)}
