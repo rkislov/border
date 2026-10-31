@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/rkislov/border/internal/aaa"
+	"github.com/rkislov/border/internal/adminauth"
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/directory"
 	"github.com/rkislov/border/internal/eap"
@@ -63,6 +64,15 @@ func command() *cobra.Command {
 		}
 	}
 	root.AddCommand(&cobra.Command{Use: "init-db", Short: "Создать или обновить схему БД", Args: cobra.NoArgs, RunE: withStore(func(c *cobra.Command, s *store.Store) error { return s.Migrate(c.Context()) })})
+	root.AddCommand(&cobra.Command{Use: "reset-admin-mfa USERNAME", Short: "Сбросить MFA, резервные коды, сессии и токены учётной записи (аварийное восстановление)", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
+		s, e := store.Open(driver, dsn)
+		if e != nil {
+			return e
+		}
+		defer s.DB.Close()
+		return (&adminauth.Service{Store: s}).Reset(c.Context(), args[0])
+	}})
+
 	for _, reset := range []bool{false, true} {
 		name := "create-admin"
 		short := "Создать администратора"

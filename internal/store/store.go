@@ -174,7 +174,7 @@ func (s *Store) Admin(ctx context.Context, name, password string, reset bool) er
 }
 func (s *Store) CheckAdmin(ctx context.Context, name, password string) bool {
 	var hash string
-	err := s.Row(ctx, "SELECT password_hash FROM admins WHERE username=? AND enabled=1", name).Scan(&hash)
+	err := s.Row(ctx, "SELECT password_hash FROM admins WHERE username=? AND enabled=1 AND mfa_secret=''", name).Scan(&hash)
 	if err != nil {
 		return false
 	}

@@ -14,6 +14,8 @@ type AdminAccount struct {
 	Username, Role, LocationID string
 	Enabled                    bool
 	Revision                   int64
+	MFAEnabled                 bool
+	MonitoringScopes           string `json:"-"`
 }
 type AdminChange struct {
 	Username, Password, Role, LocationID string
@@ -22,11 +24,11 @@ type AdminChange struct {
 
 func (s *Store) AdminAccount(ctx context.Context, user string) (AdminAccount, error) {
 	var a AdminAccount
-	err := s.Row(ctx, "SELECT username,role,location_id,enabled,revision FROM admins WHERE username=?", user).Scan(&a.Username, &a.Role, &a.LocationID, &a.Enabled, &a.Revision)
+	err := s.Row(ctx, "SELECT username,role,location_id,enabled,revision,mfa_secret<>'' FROM admins WHERE username=?", user).Scan(&a.Username, &a.Role, &a.LocationID, &a.Enabled, &a.Revision, &a.MFAEnabled)
 	return a, err
 }
 func (s *Store) AdminAccounts(ctx context.Context) ([]AdminAccount, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT username,role,location_id,enabled,revision FROM admins ORDER BY username")
+	rows, err := s.DB.QueryContext(ctx, "SELECT username,role,location_id,enabled,revision,mfa_secret<>'' FROM admins ORDER BY username")
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +36,7 @@ func (s *Store) AdminAccounts(ctx context.Context) ([]AdminAccount, error) {
 	out := []AdminAccount{}
 	for rows.Next() {
 		var a AdminAccount
-		if err = rows.Scan(&a.Username, &a.Role, &a.LocationID, &a.Enabled, &a.Revision); err != nil {
+		if err = rows.Scan(&a.Username, &a.Role, &a.LocationID, &a.Enabled, &a.Revision, &a.MFAEnabled); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -120,7 +122,7 @@ func (s *Store) SaveAdminAccount(ctx context.Context, actor string, c AdminChang
 func (s *Store) AuthenticateAdmin(ctx context.Context, user, password string) (AdminAccount, bool) {
 	var a AdminAccount
 	var hash string
-	err := s.Row(ctx, "SELECT username,role,location_id,enabled,revision,password_hash FROM admins WHERE username=?", user).Scan(&a.Username, &a.Role, &a.LocationID, &a.Enabled, &a.Revision, &hash)
+	err := s.Row(ctx, "SELECT username,role,location_id,enabled,revision,password_hash,mfa_secret<>'' FROM admins WHERE username=?", user).Scan(&a.Username, &a.Role, &a.LocationID, &a.Enabled, &a.Revision, &hash, &a.MFAEnabled)
 	if err != nil || !a.Enabled || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		return AdminAccount{}, false
 	}

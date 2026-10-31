@@ -500,3 +500,32 @@ func TestScheduleNoDuplicatesOrOldCatchup(t *testing.T) {
 		t.Fatal("invalid schedule")
 	}
 }
+
+func TestRecoveryVerifiesAdminMFASecrets(t *testing.T) {
+	c, s := fixture(t)
+	ctx := t.Context()
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	v, _ := auth.NewVault(key)
+	if e := s.Admin(ctx, "admin", "test-password-123", false); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.Exec(ctx, "UPDATE admins SET mfa_secret=?,mfa_pending=? WHERE username='admin'", v.Seal([]byte("active"), "admin-totp:admin"), v.Seal([]byte("pending"), "admin-totp:admin")); e != nil {
+		t.Fatal(e)
+	}
+	report, e := Create(ctx, c, filepath.Join(c.OutputDir, "admin-mfa.age"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if report.Secrets != 4 {
+		t.Fatal(report)
+	}
+	if e = s.Exec(ctx, "UPDATE admins SET mfa_secret=? WHERE username='admin'", v.Seal([]byte("wrong-context"), "admin-totp:someone-else")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = Create(ctx, c, filepath.Join(c.OutputDir, "invalid-mfa.age")); e == nil {
+		t.Fatal("undecryptable MFA backup accepted")
+	}
+}

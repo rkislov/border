@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/rkislov/border/internal/aaa"
+	"github.com/rkislov/border/internal/adminauth"
 	"github.com/rkislov/border/internal/auth"
 	"github.com/rkislov/border/internal/fingerbank"
 	"github.com/rkislov/border/internal/guest"
@@ -36,6 +37,8 @@ import (
 var assets embed.FS
 
 type app struct {
+	adminSecurity *adminauth.Service
+	challenges    map[string]adminChallenge
 	routerOS      *routeros.Service
 	guest         *guest.Service
 	fingerbank    *fingerbank.Client
@@ -69,7 +72,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
-	a := &app{sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt), pki: manager, acme: acme, s: s, csrf: hex.EncodeToString(b), t: template.Must(template.ParseFS(assets, "assets/index.html")), slots: make(chan struct{}, 16)}
+	a := &app{challenges: make(map[string]adminChallenge), sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt), pki: manager, acme: acme, s: s, csrf: hex.EncodeToString(b), t: template.Must(template.ParseFS(assets, "assets/index.html", "assets/security-fields.html")), slots: make(chan struct{}, 16)}
 	if len(guests) > 0 {
 		a.guest = guests[0]
 	}
@@ -77,6 +80,10 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	if a.guest != nil {
 		vault = a.guest.Vault
 	}
+	if vault == nil && manager != nil {
+		vault = manager.Vault
+	}
+	a.adminSecurity = &adminauth.Service{Store: s, Vault: vault}
 	a.routerOS = &routeros.Service{Store: s, Vault: vault}
 	a.fingerbank = fingerbank.New(s, vault)
 	a.identities = &identitysource.Service{Store: s, Vault: vault}
@@ -84,6 +91,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	a.notifications = &notification.Service{Store: s, Vault: vault}
 	mux := http.NewServeMux()
 	a.roleRoutes(mux)
+	a.securityRoutes(mux)
 	a.changeJournalRoutes(mux)
 	a.listRoutes(mux)
 	a.healthRoutes(mux)
