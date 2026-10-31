@@ -32,6 +32,7 @@ type Status struct {
 	WorkerSeen int64
 	NextRun    int64
 	Jobs       []Job
+	Files      FileStatus
 }
 
 func (v Schedule) Validate() error {
@@ -73,7 +74,12 @@ func ReadStatus(ctx context.Context, s *store.Store) (Status, error) {
 		}
 		v.Jobs = append(v.Jobs, j)
 	}
-	return v, rows.Err()
+	e = errors.Join(rows.Err(), rows.Close())
+	if e != nil {
+		return v, e
+	}
+	v.Files, e = ReadFileStatus(ctx, s)
+	return v, e
 }
 
 func SaveSchedule(ctx context.Context, s *store.Store, v Schedule) error {

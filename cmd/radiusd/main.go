@@ -135,7 +135,7 @@ func command() *cobra.Command {
 	cert.Flags().StringVar(&dir, "out", "certs", "Каталог сертификатов")
 	cert.Flags().StringVar(&host, "host", "localhost", "DNS-имя или IP сервера")
 	root.AddCommand(cert)
-	var httpAddr, authAddr, acctAddr, certDir, portalAddr, acmeHTTP, publicURL, tenantDir string
+	var httpAddr, authAddr, acctAddr, certDir, portalAddr, acmeHTTP, publicURL, tenantDir, backupDownloadDir string
 	var workers int
 	var adminMTLS bool
 	serve := &cobra.Command{Use: "serve", Short: "Запустить RADIUS и HTTPS/mTLS-панель", Args: cobra.NoArgs, RunE: withStore(func(c *cobra.Command, s *store.Store) error {
@@ -324,7 +324,7 @@ func command() *cobra.Command {
 			portalHandler = selfservice.New(domain, codes, managedPKI, strings.TrimSuffix(publicURL, "/")+"/portal/default", guests).Handler()
 		}
 		if len(master) == 32 {
-			tenants := &tenancy.Manager{Root: s, RootOptions: rootOptions, Driver: driver, DSN: dsn, Directory: tenantDir, Key: append([]byte(nil), master...), Pair: tlsConfig.Certificates[0], RequireMTLS: adminMTLS, PublicURL: publicURL}
+			tenants := &tenancy.Manager{Root: s, RootOptions: rootOptions, Driver: driver, DSN: dsn, Directory: tenantDir, Key: append([]byte(nil), master...), Pair: tlsConfig.Certificates[0], RequireMTLS: adminMTLS, PublicURL: publicURL, BackupDownloadDir: backupDownloadDir}
 			if err = tenants.Init(ctx); err != nil {
 				return err
 			}
@@ -417,6 +417,7 @@ func command() *cobra.Command {
 	serve.Flags().StringVar(&portalAddr, "portal", "127.0.0.1:9443", "Отдельный HTTPS портал пользователей (при BORDER_MASTER_KEY)")
 	serve.Flags().StringVar(&acmeHTTP, "acme-http", "127.0.0.1:8080", "HTTP-01 listener; пробросьте публичный TCP 80 сюда")
 	serve.Flags().StringVar(&tenantDir, "tenant-dir", env("BORDER_TENANT_DIR", "tenants"), "Каталог изолированных SQLite баз тенантов")
+	serve.Flags().StringVar(&backupDownloadDir, "backup-download-dir", env("BORDER_BACKUP_DOWNLOAD_DIR", ""), "Каталог зашифрованных копий для скачивания (только корневая панель)")
 	serve.Flags().StringVar(&publicURL, "portal-url", os.Getenv("BORDER_PORTAL_URL"), "Публичный HTTPS URL портала для CRL")
 	serve.Flags().BoolVar(&adminMTLS, "admin-mtls", false, "Требовать клиентский сертификат дополнительно к паролю администратора")
 	root.AddCommand(serve)

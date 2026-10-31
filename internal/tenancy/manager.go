@@ -43,12 +43,15 @@ type Manager struct {
 	Root                              *store.Store
 	RootOptions                       aaa.Options
 	Driver, DSN, Directory, PublicURL string
+	BackupDownloadDir                 string
 	Key                               []byte
 	Pair                              tls.Certificate
 	RequireMTLS                       bool
 	mu                                sync.RWMutex
 	runtimes                          map[string]*Runtime
 }
+
+func (m *Manager) BackupDownloadDirectory() string { return m.BackupDownloadDir }
 
 func (m *Manager) Init(ctx context.Context) error {
 	m.runtimes = make(map[string]*Runtime)

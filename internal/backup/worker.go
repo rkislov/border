@@ -23,6 +23,9 @@ import (
 // Process is called by a systemd oneshot. The OS lock is released even on SIGKILL.
 // Sources/identity/destination come ONLY from the host-owned configuration.
 func Process(ctx context.Context, c Config, runNow bool) (job *Job, err error) {
+	return process(ctx, c, runNow, checkNetworkMount)
+}
+func process(ctx context.Context, c Config, runNow bool, checkMount func(FileDestination) error) (job *Job, err error) {
 	if err = c.Validate(); err != nil {
 		return nil, err
 	}
@@ -63,6 +66,13 @@ func Process(ctx context.Context, c Config, runNow bool) (job *Job, err error) {
 	if err = controlOwnership(c.RootDB); err != nil {
 		return nil, err
 	}
+	if err = syncFileConfiguration(ctx, s, c); err != nil {
+		return nil, err
+	}
+	if err = enqueueAutomaticFiles(ctx, s, c); err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, processFileQueue(ctx, s, c, checkMount)) }()
 	now := time.Now().Unix()
 	if err = s.Exec(ctx, "UPDATE backup_control SET worker_seen=? WHERE id=1", now); err != nil {
 		return nil, err
@@ -150,8 +160,11 @@ func Process(ctx context.Context, c Config, runNow bool) (job *Job, err error) {
 		dbErr = errors.Join(dbErr, s.Exec(finish, "UPDATE backup_jobs SET verification_state=?,verified_at=? WHERE id=? AND kind='backup'", verification, verifiedAt, j.SourceID))
 	}
 	if err == nil && dbErr == nil && j.Kind == "backup" {
+		dbErr = enqueueAutomaticFiles(finish, s, c)
 		var keep int
-		dbErr = s.Row(finish, "SELECT keep_count FROM backup_control WHERE id=1").Scan(&keep)
+		if dbErr == nil {
+			dbErr = s.Row(finish, "SELECT keep_count FROM backup_control WHERE id=1").Scan(&keep)
+		}
 		if dbErr == nil {
 			dbErr = prune(finish, s, c, keep)
 		}
@@ -284,7 +297,7 @@ func prune(ctx context.Context, s *store.Store, c Config, keep int) error {
 		return e
 	}
 	for _, id := range old {
-		if e = s.Exec(ctx, "UPDATE backup_jobs SET state='pruning' WHERE id=? AND NOT EXISTS(SELECT 1 FROM backup_jobs q WHERE q.source_id=? AND q.state IN ('pending','running'))", id, id); e != nil {
+		if e = s.Exec(ctx, "UPDATE backup_jobs SET state='pruning' WHERE id=? AND "+fileRetentionGuard+" AND NOT EXISTS(SELECT 1 FROM backup_jobs q WHERE q.source_id=? AND q.state IN ('pending','running'))", id, id); e != nil {
 			return e
 		}
 	}

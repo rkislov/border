@@ -29,6 +29,8 @@ type Config struct {
 	OutputDir    string
 	IdentityFile string
 	MaxBytes     int64
+	DownloadDir  string
+	FileExport   *FileDestination
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -86,6 +88,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxBytes < 1<<20 || c.MaxBytes > 1<<40 {
 		return errors.New("MaxBytes must be between 1 MiB and 1 TiB")
+	}
+	if err := c.validateFileExports(); err != nil {
+		return err
 	}
 	return nil
 }
