@@ -119,3 +119,22 @@ func TestPublicationRevocationEndToEnd(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicationResultWorkerStartsAndReportsHealth(t *testing.T) {
+	s := database(t)
+	stop := StartRevocations(t.Context(), s)
+	defer stop()
+	until := time.Now().Add(3 * time.Second)
+	for time.Now().Before(until) {
+		for _, o := range s.Metrics.Snapshot().Operations {
+			if o.Name == "publication_results" && o.Count > 0 {
+				if o.Failures != 0 {
+					t.Fatal(o)
+				}
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("publication result worker did not report a successful scan")
+}

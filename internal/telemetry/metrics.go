@@ -26,7 +26,7 @@ type Registry struct {
 	operations map[string]*Operation
 }
 
-var names = []string{"radius_auth", "radius_accounting", "routing", "transport_drop", "identity_auth", "identity_status", "smtp", "sms", "push", "revocation", "account_sync", "retention", "session_action"}
+var names = []string{"radius_auth", "radius_accounting", "routing", "transport_drop", "identity_auth", "identity_status", "smtp", "sms", "push", "revocation", "account_sync", "retention", "session_action", "policy_schedule", "publication_results", "policy_notifications", "policy_notification_delivery"}
 
 func New() *Registry {
 	r := &Registry{started: time.Now().Unix(), operations: map[string]*Operation{}}
