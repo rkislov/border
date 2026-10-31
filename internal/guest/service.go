@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net/http"
 	netmail "net/mail"
 	"strings"
 	"sync"
@@ -24,6 +25,9 @@ import (
 )
 
 type Service struct {
+	oidcFlows         map[string]oidcFlow
+	oidcStarts        map[string]time.Time
+	oidcTestClient    *http.Client
 	AvailableChannels func(context.Context, string, string) ([]string, error)
 	SenderForContext  func(context.Context, string, string) (sms.SMSProvider, error)
 	SendEmail         func(context.Context, string, string, string, string) error
@@ -147,6 +151,13 @@ func (s *Service) Close() {
 	if s.provider != nil {
 		s.provider.Close()
 	}
+	for _, f := range s.oidcFlows {
+		if f.client != nil {
+			f.client.CloseIdleConnections()
+		}
+	}
+	clear(s.oidcFlows)
+	clear(s.oidcStarts)
 }
 func (s *Service) StartCleanup(ctx context.Context) func() {
 	ctx, cancel := context.WithCancel(ctx)
@@ -171,6 +182,24 @@ func (s *Service) StartCleanup(ctx context.Context) func() {
 }
 func (s *Service) Cleanup(ctx context.Context) error {
 	now := time.Now().Unix()
+	s.mu.Lock()
+	for id, f := range s.oidcFlows {
+		if f.expires.Unix() <= now {
+			if f.client != nil {
+				f.client.CloseIdleConnections()
+			}
+			delete(s.oidcFlows, id)
+		}
+	}
+	for id, expiry := range s.oidcStarts {
+		if expiry.Unix() <= now {
+			delete(s.oidcStarts, id)
+		}
+	}
+	s.mu.Unlock()
+	if err := s.Store.Exec(ctx, "DELETE FROM guest_oidc_sessions WHERE expires_at<=?", now); err != nil {
+		return err
+	}
 	if err := s.Store.Exec(ctx, "DELETE FROM guest_sessions WHERE expires_at<=?", now); err != nil {
 		return err
 	}

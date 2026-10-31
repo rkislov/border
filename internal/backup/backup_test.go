@@ -529,3 +529,29 @@ func TestRecoveryVerifiesAdminMFASecrets(t *testing.T) {
 		t.Fatal("undecryptable MFA backup accepted")
 	}
 }
+
+func TestRecoveryVerifiesGuestOIDCSecret(t *testing.T) {
+	c, s := fixture(t)
+	ctx := t.Context()
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	v, _ := auth.NewVault(key)
+	if e := s.Exec(ctx, "INSERT INTO guest_oidc_providers(scope,id,config,secret,revision) VALUES('tenant','oidc','{}',?,'rev1')", v.Seal([]byte("client-secret"), "guest-oidc:tenant:oidc")); e != nil {
+		t.Fatal(e)
+	}
+	report, e := Create(ctx, c, filepath.Join(c.OutputDir, "guest-oidc.age"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if report.Secrets != 3 {
+		t.Fatal(report)
+	}
+	if e = s.Exec(ctx, "UPDATE guest_oidc_providers SET secret=?", v.Seal([]byte("wrong-context"), "guest-oidc:other:oidc")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = Create(ctx, c, filepath.Join(c.OutputDir, "invalid-oidc.age")); e == nil {
+		t.Fatal("undecryptable OIDC secret accepted")
+	}
+}

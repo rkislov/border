@@ -64,6 +64,9 @@ func (s *Store) RevokeIdentity(ctx context.Context, user string) error {
 	return tx.Commit()
 }
 func (s *Store) RefreshRevocations(ctx context.Context) error {
+	if err := s.RefreshOIDCRevocations(ctx); err != nil {
+		return err
+	}
 	now := time.Now().Unix()
 	return s.Exec(ctx, `UPDATE access_grants SET reason=CASE
  WHEN username IN (SELECT username FROM identity_status WHERE blocked=1) OR username IN (SELECT 'local/' || username FROM local_users WHERE enabled=0) THEN 'user blocked'

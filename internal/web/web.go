@@ -102,6 +102,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	a.accessRoutes(mux)
 	a.notificationRoutes(mux)
 	a.guestRoutes(mux)
+	a.guestOIDCRoutes(mux)
 	a.portalDesignRoutes(mux)
 	a.profileRoutes(mux)
 	a.fingerprintRoutes(mux)

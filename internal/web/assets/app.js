@@ -79,7 +79,7 @@ async function loadGuest(){
  f.elements.Token.value='';$('#sms-status').textContent=g.HasToken?'Токен сохранён в зашифрованном виде.':'Токен ещё не задан.';
  p.elements.Enabled.checked=g.Policy.Enabled;
  for(const k of ['VLAN','SessionSeconds','MaxPerHour'])p.elements[k].value=g.Policy[k];
- table('#guest-list',['NAS','MAC','Телефон','VLAN','До'],g.Sessions.map(s=>[s.NAS,s.MAC,s.MaskedPhone,s.VLAN,date(s.Expires)]));
+ table('#guest-list',['NAS','MAC','Личность / контакт','VLAN','До'],g.Sessions.map(s=>[s.NAS,s.MAC,s.MaskedPhone,s.VLAN,date(s.Expires)]));
  $('#guest-actions').replaceChildren();
  for(const s of g.Sessions){const b=document.createElement('button');b.className='remove';b.textContent='Отозвать '+s.MAC+' / '+s.NAS;b.onclick=async()=>{if(confirm('Отозвать гостевое разрешение?'))await mutate('/api/guest/revoke',{NAS:s.NAS,MAC:s.MAC});};$('#guest-actions').append(b);}
  }catch(e){$('#sms-status').textContent=e.message;}
@@ -204,7 +204,7 @@ $('#diagnostic-form').onsubmit=async e=>{
  $('#diagnostic-status').textContent=statuses[result.Status]||result.Status;
  $('#diagnostic-summary').textContent='Проверено: '+date(result.CheckedAt)+'. '+(result.Status==='legacy'?'Одиночная политика не задана, набор выключен. Старый путь авторизации этой проверкой не оценивается.':result.Status==='configuration_error'?'Проверьте существование политик, цепочку авторизации, словарь и сопоставление сегмента с VLAN. Перехода к следующей привязке после ошибки нет.':'Ниже показаны проверенные привязки до первого совпадения. Последующие привязки не рассматриваются.');
  $('#diagnostic-policy').textContent=result.PolicyID?'Политика: '+result.PolicyID+' · Авторизация: '+result.AuthenticationID+' · Режим: '+result.Mode+(result.Mode==='network'?' · VLAN: '+result.VLAN:'')+(result.SessionSeconds?' · Максимум сессии: '+result.SessionSeconds+' сек.':'')+(result.BindingID?' · Привязка: '+result.BindingID+' · Версия: '+result.BindingVersion:' · Одиночная политика'):'';
- const sources={local:'Пароль локального пользователя',directory:'Пароль домена '+(result.DomainID||''),codes:'Одноразовый код',mab:'MAC устройства',eap_tls:'Сертификат EAP-TLS'};
+ const sources={local:'Пароль локального пользователя',directory:'Пароль домена '+(result.DomainID||''),codes:'Одноразовый код',mab:'MAC устройства',eap_tls:'Сертификат EAP-TLS',oidc:'OIDC · гостевой портал'};
  $('#diagnostic-chain').textContent=result.Steps?'Обязательные проверки при реальном входе: '+result.Steps.map(step=>({primary:sources[result.Source]||result.Source,device:'Зарегистрированное устройство',totp:'TOTP'}[step]||step)).join(' → '):'';
  const reasons={selected:'Совпадение · выбор остановлен',disabled:'Привязка выключена',protocol:'Другой протокол',service_type:'Другой Service-Type',ssid:'Другой SSID',nas_port_type:'Другой NAS-Port-Type',identity_source:'Другое имя домена / источник'};
  table('#diagnostic-trace',['Приоритет','Привязка','Политика','Результат'],result.Trace.map(t=>[t.Priority,t.ID,t.PolicyID,reasons[t.Reason]||t.Reason]));$('#diagnostic-result').hidden=false;

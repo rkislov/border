@@ -49,7 +49,7 @@ func (s *Store) GuestAccess(ctx context.Context, nas, mac string) (int, int64, e
 	return vlan, expires, err
 }
 func (s *Store) GuestSessions(ctx context.Context) ([]GuestSession, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT nas,mac,masked_phone,vlan,expires_at FROM guest_sessions ORDER BY expires_at DESC LIMIT 200")
+	rows, err := s.DB.QueryContext(ctx, "SELECT nas,mac,masked_phone,vlan,expires_at FROM guest_sessions UNION ALL SELECT g.nas,g.mac,'OIDC ' || g.identity,COALESCE(n.vlan,l.vlan,0),g.expires_at FROM guest_oidc_sessions g JOIN access_policies p ON p.id=g.policy_id JOIN nas a ON a.address=g.nas LEFT JOIN nas_segments n ON n.nas=g.nas AND n.segment_id=p.segment_id LEFT JOIN location_segments l ON l.location_id=a.location_id AND l.segment_id=p.segment_id ORDER BY expires_at DESC LIMIT 200")
 	if err != nil {
 		return nil, err
 	}
@@ -63,4 +63,21 @@ func (s *Store) GuestSessions(ctx context.Context) ([]GuestSession, error) {
 		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) RevokeGuest(ctx context.Context, nas, mac string) error {
+	tx, e := s.DB.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if _, e = tx.ExecContext(ctx, s.SQL("UPDATE access_grants SET reason='guest access revoked',next_attempt=0 WHERE reason='' AND guest_oidc_id IN (SELECT id FROM guest_oidc_sessions WHERE nas=? AND mac=?)"), nas, mac); e != nil {
+		return e
+	}
+	for _, table := range []string{"guest_sessions", "guest_oidc_sessions"} {
+		if _, e = tx.ExecContext(ctx, s.SQL("DELETE FROM "+table+" WHERE nas=? AND mac=?"), nas, mac); e != nil {
+			return e
+		}
+	}
+	return tx.Commit()
 }

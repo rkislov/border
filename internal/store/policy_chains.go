@@ -23,6 +23,9 @@ func (a AuthenticationPolicy) Chain() []string {
 	return out
 }
 func (a AuthenticationPolicy) ValidateChain() error {
+	if a.Source == "oidc" && (a.RequireTOTP || a.EAPMethod != "" || len(a.Chain()) != 1 || a.Chain()[0] != "primary") {
+		return fmt.Errorf("OIDC requires the portal primary check only")
+	}
 	if a.EAPMethod != "" {
 		if (a.EAPMethod != "peap" && a.EAPMethod != "ttls") || (a.Source != "local" && a.Source != "directory") {
 			return fmt.Errorf("tunneled EAP requires local or directory source")
@@ -139,7 +142,7 @@ func (s *Store) saveNASPoliciesTx(ctx context.Context, tx *sql.Tx, set NASPolicy
 			return fmt.Errorf("unknown access policy")
 		}
 		expected := "pap"
-		if source == "mab" {
+		if source == "mab" || source == "oidc" {
 			expected = "mab"
 		}
 		if source == "eap_tls" {
@@ -226,7 +229,7 @@ func (s *Store) selectPolicy(ctx context.Context, nas string, request PolicyRequ
 			return nil, true, err
 		}
 		expected := "pap"
-		if p.Authentication.Source == "mab" {
+		if p.Authentication.Source == "mab" || p.Authentication.Source == "oidc" {
 			expected = "mab"
 		}
 		if p.Authentication.Source == "eap_tls" || p.Authentication.EAPMethod != "" {
