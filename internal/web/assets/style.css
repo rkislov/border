@@ -51,3 +51,5 @@ main.operations{margin:0 auto;width:100%;max-width:1400px;padding:32px 24px}.ope
 .publication-result{margin:24px 0;padding:22px;border:1px solid #b8cfc4;border-radius:10px;background:#f4f8f5}.publication-result h4{margin:12px 0}.publication-result details{margin-top:24px}
 
 .backup-download-link{display:inline-block;margin:8px 12px 8px 0;padding:10px 14px;border-radius:6px;background:#e7eee9;color:#234f3d;font-weight:600;text-decoration:none}.backup-download-link:hover{text-decoration:underline}#backups button:not(.primary){padding:10px 14px;border-radius:6px;background:#e7eee9;color:#234f3d}#backups .draft-entry p{overflow-wrap:anywhere}
+
+#security-controls pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#edf3ee;padding:18px;border-radius:6px}#security-controls button:not(.primary){padding:10px 14px;border-radius:6px;background:#e7eee9;color:#234f3d;margin:8px 8px 8px 0}#security-controls input[type=checkbox]{width:auto}#security-controls img{max-width:100%;height:auto}#security-controls .error{color:#a14229}#monitoring-value{overflow-wrap:anywhere}#security-controls form+form{margin-top:24px}
