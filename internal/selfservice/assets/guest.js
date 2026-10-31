@@ -31,5 +31,8 @@ else post('design',{Token:token}).then(d=>{
  $('#phone-form button').textContent=d.RequestLabel==='Получить SMS-код'?'Получить код':d.RequestLabel;$('#code-form button').textContent=d.ConfirmLabel;
  const names={sms:'SMS',email:'Электронная почта'},chooser=$('#method-choice');chooser.replaceChildren();
  for(const method of d.Methods||[]){if(!names[method])continue;const b=document.createElement('button');b.type='button';b.textContent=names[method];b.onclick=()=>{channel=method;contactStep();};chooser.append(b);}
+ const sso=document.createDocumentFragment();
+ for(const provider of d.OIDC||[]){const b=document.createElement('button');b.type='button';b.textContent=provider.Name;b.onclick=async()=>{b.disabled=true;try{const result=await post('oidc/start',{Token:token,Provider:provider.ID});const target=new URL(result.URL);if(target.protocol!=='https:')throw Error('Недопустимый адрес провайдера');location.assign(target.href);}catch(e){notice(e.message,true);b.disabled=false;}};sso.append(b);}
+ if(d.SSOPosition==='top')chooser.prepend(sso);else chooser.append(sso);
  methodStep();
 }).catch(e=>{notice(e.message,true);$('#phone-form').hidden=true;});

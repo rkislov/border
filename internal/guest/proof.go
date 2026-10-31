@@ -111,10 +111,11 @@ func (s *Service) redirect(ctx context.Context, token string) (Redirect, error) 
 type PublicDesign struct {
 	store.PortalDesign
 	Methods []string
+	OIDC    []OIDCButton
 }
 
 // Design resolves verified scope and intersects enabled methods with configured channels.
-// SSO placeholders are never public authentication methods.
+// OIDC methods also require a dedicated policy bound to the NAS.
 func (s *Service) Design(ctx context.Context, token string) (PublicDesign, error) {
 	r, err := s.redirect(ctx, token)
 	if err != nil {
@@ -132,11 +133,21 @@ func (s *Service) Design(ctx context.Context, token string) (PublicDesign, error
 	if !policy.Enabled {
 		return out, nil
 	}
+	if _, e := s.OIDCCallbackURL(); e == nil && d.SSOEnabled {
+		for _, id := range d.SSOProviders {
+			if _, c, e := s.Store.GuestOIDCPolicy(ctx, r.NAS, r.MAC, r.Domain, id); e == nil {
+				out.OIDC = append(out.OIDC, OIDCButton{ID: c.ID, Name: c.Name})
+			}
+		}
+	}
 	channels := []string{}
 	if s.AvailableChannels != nil {
 		channels, err = s.AvailableChannels(ctx, r.NAS, r.Domain)
 		if err != nil {
-			return out, err
+			if len(out.OIDC) == 0 {
+				return out, err
+			}
+			channels = nil
 		}
 	} else {
 		var e error
@@ -167,3 +178,5 @@ func (s *Service) Design(ctx context.Context, token string) (PublicDesign, error
 	}
 	return out, nil
 }
+
+type OIDCButton struct{ ID, Name string }

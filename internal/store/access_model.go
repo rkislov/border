@@ -121,7 +121,7 @@ func (s *Store) saveAuthenticationTx(ctx context.Context, tx *sql.Tx, a Authenti
 		return fmt.Errorf("policy ID and name required")
 	}
 	switch a.Source {
-	case "local", "directory", "codes", "mab", "eap_tls":
+	case "local", "directory", "codes", "mab", "eap_tls", "oidc":
 	default:
 		return fmt.Errorf("invalid authentication source")
 	}
@@ -197,7 +197,7 @@ func (s *Store) saveAccessTx(ctx context.Context, tx *sql.Tx, a AccessPolicy) er
 	if err := tx.QueryRowContext(ctx, s.SQL("SELECT source,eap_method FROM authentication_policies WHERE id=?"), a.AuthenticationID).Scan(&source, &method); err != nil {
 		return fmt.Errorf("authentication policy required")
 	}
-	if a.Mode != "network" && (source == "mab" || source == "eap_tls" || method != "") {
+	if a.Mode != "network" && (source == "mab" || source == "eap_tls" || source == "oidc" || method != "") {
 		return fmt.Errorf("SSH/VPN policy currently requires PAP authentication")
 	}
 	_, err := tx.ExecContext(ctx, s.SQL("INSERT INTO access_policies(id,name,authentication_id,mode,segment_id,valid_from,valid_until,session_seconds,idle_seconds,privilege,group_name,role,filter_id,enabled) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,authentication_id=excluded.authentication_id,mode=excluded.mode,segment_id=excluded.segment_id,valid_from=excluded.valid_from,valid_until=excluded.valid_until,session_seconds=excluded.session_seconds,idle_seconds=excluded.idle_seconds,privilege=excluded.privilege,group_name=excluded.group_name,role=excluded.role,filter_id=excluded.filter_id,enabled=excluded.enabled"), a.ID, a.Name, a.AuthenticationID, a.Mode, segment, a.ValidFrom, a.ValidUntil, a.SessionSeconds, a.IdleSeconds, a.Privilege, a.Group, a.Role, a.Filter, integer(a.Enabled))

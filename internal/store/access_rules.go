@@ -64,7 +64,7 @@ func (s *Store) saveGroupTx(ctx context.Context, tx *sql.Tx, g UserGroup) error 
 	for _, member := range g.Members {
 		member = strings.ToLower(strings.TrimSpace(member))
 		domain, user, ok := strings.Cut(member, "/")
-		if !ok || !ruleID.MatchString(domain) || user == "" || len(member) > 200 || strings.ContainsAny(member, "\r\n\x00") {
+		if !regexp.MustCompile(`^oidc:[a-f0-9]{64}$`).MatchString(member) && (!ok || !ruleID.MatchString(domain) || user == "" || len(member) > 200 || strings.ContainsAny(member, "\r\n\x00")) {
 			return fmt.Errorf("group members must use local/login or domain/login")
 		}
 		if _, e = tx.ExecContext(ctx, s.SQL("INSERT INTO user_group_members(group_id,username) VALUES(?,?)"), g.ID, member); e != nil {

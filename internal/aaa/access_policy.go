@@ -2,6 +2,7 @@ package aaa
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"github.com/rkislov/border/internal/mschap"
 	"github.com/rkislov/border/internal/radprofile"
@@ -51,8 +52,25 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 		return nil, parseErr
 	}
 	msSuccess := ""
+	var oidcSession store.GuestOIDCSession
 	if valid {
-		if ms != nil {
+		if a.Source == "oidc" {
+			mac, e := NormalizeMAC(rfc2865.UserName_GetString(p))
+			calling := rfc2865.CallingStationID_GetString(p)
+			if calling != "" {
+				normalized, e2 := NormalizeMAC(calling)
+				if e2 != nil || normalized != mac {
+					e = fmt.Errorf("guest MAC mismatch")
+				}
+			}
+			valid = e == nil && ms == nil && len(p.Attributes.Get(79)) == 0 && len(p.Attributes.Get(3)) == 0 && b.Access.Mode == "network"
+			if valid {
+				oidcSession, e = s.GuestOIDCSession(ctx, host, mac)
+				valid = e == nil && oidcSession.PolicyHash == store.OIDCPolicyHash(b)
+				user = oidcSession.Identity
+			}
+			reason = "OIDC guest authorization"
+		} else if ms != nil {
 			user, msSuccess, valid, reason = authenticateMSCHAP(ctx, s, p, b, o, ms)
 			if valid && b.Authentication.Source == "directory" {
 				groups, err = o.Identities.DomainGroups(ctx, user)
@@ -76,6 +94,13 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 		if valid {
 			ttl, err = current.Timeout(time.Now())
 			valid = err == nil
+		}
+	}
+	if valid && a.Source == "oidc" {
+		remaining := oidcSession.Expires - time.Now().Unix()
+		valid = remaining > 0
+		if valid && remaining < int64(ttl) {
+			ttl = uint32(remaining)
 		}
 	}
 	if valid {
@@ -116,7 +141,16 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 		}
 	}
 	if valid {
-		token, e := s.NewPolicyGrant(ctx, host, user, b, time.Now().Unix()+int64(ttl))
+		var token string
+		var e error
+		if a.Source == "oidc" {
+			token, e = s.NewGuestOIDCGrant(ctx, oidcSession, b, time.Now().Unix()+int64(ttl))
+		} else {
+			token, e = s.NewPolicyGrant(ctx, host, user, b, time.Now().Unix()+int64(ttl))
+		}
+		if e == sql.ErrNoRows {
+			return nil, fmt.Errorf("OIDC authorization expired")
+		}
 		if e != nil {
 			return nil, e
 		}

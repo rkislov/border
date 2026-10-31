@@ -8,6 +8,7 @@ import (
 )
 
 func (p *Portal) guestRoutes(mux *http.ServeMux) {
+	p.guestOIDCRoutes(mux)
 	mux.HandleFunc("POST /api/guest/design", func(w http.ResponseWriter, r *http.Request) {
 		if p.Guest == nil {
 			http.Error(w, "portal unavailable", 503)

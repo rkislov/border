@@ -218,8 +218,12 @@ func TestPublicationResultMissingAccountingAndRestart(t *testing.T) {
 	for rows.Next() {
 		var seq int
 		var name string
-		if e = rows.Scan(&seq, &name, &path); e != nil {
+		var filename string
+		if e = rows.Scan(&seq, &name, &filename); e != nil {
 			t.Fatal(e)
+		}
+		if name == "main" {
+			path = filename
 		}
 	}
 	rows.Close()

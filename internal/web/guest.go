@@ -76,7 +76,7 @@ func (a *app) guestRoutes(mux *http.ServeMux) {
 		if !decode(w, r, &v) {
 			return
 		}
-		a.finish(w, r, a.s.Exec(r.Context(), "DELETE FROM guest_sessions WHERE nas=? AND mac=?", v.NAS, v.MAC), "revoke guest grant")
+		a.finish(w, r, a.s.RevokeGuest(r.Context(), v.NAS, v.MAC), "revoke guest grant")
 	})
 	mux.HandleFunc("POST /api/guest/link", func(w http.ResponseWriter, r *http.Request) {
 		if !ready(w) {
