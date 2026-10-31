@@ -5,6 +5,7 @@ package aaa
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -16,6 +17,8 @@ import (
 	"layeh.com/radius/rfc2866"
 	"layeh.com/radius/rfc2868"
 )
+
+var errRevocationRecord = errors.New("revocation result could not be recorded")
 
 type DynamicResult struct {
 	Acknowledged bool
@@ -60,6 +63,27 @@ func changeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 		if v.MAC != mac || v.Username != username || v.Updated != updated || (v.GrantToken != "" && v.GrantToken != grantToken) || (v.Generation != "" && v.Generation != generation) {
 			return DynamicResult{}, fmt.Errorf("session changed; refresh the list")
 		}
+	}
+	nasResponse := store.RevocationNASResponse{}
+	session := store.Session{NAS: nas, ID: id, MAC: mac, Username: username, Updated: updated, GrantToken: grantToken, Generation: generation, StartedAt: startedAt}
+	if action == "disconnect" {
+		// Persist the authenticated NAS result for manual and automatic attempts,
+		// even if the request context expired while waiting for the network.
+		defer func() {
+			message := ""
+			if resultErr != nil {
+				message = resultErr.Error()
+			}
+			next := time.Now().Add(time.Minute).Unix()
+			if resultValue.Acknowledged {
+				next = 0
+			}
+			recordCtx, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			defer cancelRecord()
+			if e := s.RecordRevocation(recordCtx, session, resultValue.Code, int64(resultValue.ErrorCause), message, next, nasResponse); e != nil {
+				resultErr = fmt.Errorf("%w: %v", errRevocationRecord, e)
+			}
+		}()
 	}
 	if net.ParseIP(nas) == nil || len(secret) < 16 {
 		return DynamicResult{}, fmt.Errorf("invalid NAS configuration")
@@ -116,6 +140,11 @@ func changeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 	exchangeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	client := &radius.Client{Retry: time.Second, MaxPacketErrors: 3}
+	if action == "disconnect" {
+		if err = s.BeginPublicationRevocation(ctx, session); err != nil {
+			return DynamicResult{}, err
+		}
+	}
 	response, err := client.Exchange(exchangeCtx, request, net.JoinHostPort(nas, strconv.Itoa(port)))
 	if err != nil {
 		return DynamicResult{}, fmt.Errorf("NAS did not return an authenticated response")
@@ -157,12 +186,13 @@ func changeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 		}
 		result.ErrorCause = binary.BigEndian.Uint32(cause)
 	}
+	nasResponse = store.RevocationNASResponse{Code: result.Code, Cause: int64(result.ErrorCause)}
 	outcome := "denied"
 	if result.Acknowledged {
 		outcome = "acknowledged"
 	}
 	if err = s.Audit(ctx, "web", nas+"/"+id, outcome, fmt.Sprintf("%s %s Error-Cause=%d", action, result.Code, result.ErrorCause)); err != nil {
-		return DynamicResult{}, fmt.Errorf("dynamic authorization completed but audit failed")
+		return result, fmt.Errorf("dynamic authorization completed but audit failed")
 	}
 	if !result.Acknowledged && result.ErrorCause == 406 && action == "disconnect" && fallback != nil {
 		confirmed, e := fallback(ctx, store.Session{NAS: nas, ID: id, MAC: mac, Username: username, Updated: updated, GrantToken: grantToken, Generation: generation, StartedAt: startedAt})
@@ -180,7 +210,7 @@ func changeSession(ctx context.Context, s *store.Store, nas, id, action string, 
 	}
 	if result.Acknowledged && action == "disconnect" {
 		if err = s.ConfirmDisconnect(ctx, store.Session{NAS: nas, ID: id, MAC: mac, Username: username, GrantToken: grantToken, Generation: generation}); err != nil {
-			return DynamicResult{}, fmt.Errorf("NAS disconnected session, local status update failed")
+			return result, fmt.Errorf("NAS disconnected session, local status update failed")
 		}
 	}
 	return result, nil

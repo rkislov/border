@@ -124,7 +124,7 @@ func TestReviewAPISelfApprovalCSRFAndPublicationGuard(t *testing.T) {
 	}
 	w = send("GET", "/api/change-journal/"+journal.Items[0].ID, "alice", "", "")
 	var change store.ChangeDetail
-	if e = json.Unmarshal(w.Body.Bytes(), &change); e != nil || w.Code != 200 || change.Event.Actor != "alice" || len(change.Objects) != 1 || len(change.Timeline) != 6 {
+	if e = json.Unmarshal(w.Body.Bytes(), &change); e != nil || w.Code != 200 || change.Event.Actor != "alice" || len(change.Objects) != 1 || len(change.Timeline) != 6 || change.Result == nil || change.Result.BatchID != review.BatchID {
 		t.Fatal(w.Code, w.Body.String(), e)
 	}
 	for _, path := range []string{"?before=bad", "?before=-1", "?limit=0", "?limit=101", "?limit=bad"} {

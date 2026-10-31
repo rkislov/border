@@ -89,6 +89,11 @@ func TestChangeJournalSnapshotAndAtomicFailure(t *testing.T) {
 	if len(page.Items) != 0 {
 		t.Fatal("uncommitted publication logged")
 	}
+	var tracked int
+	must(s.Row(ctx, "SELECT COUNT(*) FROM publication_results").Scan(&tracked))
+	if tracked != 0 {
+		t.Fatal("uncommitted publication tracked")
+	}
 	must(s.Exec(ctx, "DROP TRIGGER reject_journal_publish"))
 	must(s.PublishPolicyDraft(ctx, "access", "vpn", 1, "admin"))
 	page, _ = s.ChangeJournal(ctx, "", "", "published", 0, 50)
