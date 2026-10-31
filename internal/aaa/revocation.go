@@ -4,6 +4,7 @@ package aaa
 
 import (
 	"context"
+	"errors"
 	"github.com/rkislov/border/internal/store"
 	"log/slog"
 	"time"
@@ -31,6 +32,14 @@ func StartRevocationsWithFallback(parent context.Context, s *store.Store, fallba
 			cancelRun()
 			if err != nil && ctx.Err() == nil {
 				slog.Error("policy schedule scan failed", "error", err)
+			}
+			run, cancelRun = context.WithTimeout(ctx, 10*time.Second)
+			started = time.Now()
+			err = s.RunPublicationResults(run, started)
+			s.Metrics.Finish("publication_results", started, err)
+			cancelRun()
+			if err != nil && ctx.Err() == nil {
+				slog.Error("publication result scan failed", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -147,24 +156,13 @@ func RevokeSessions(ctx context.Context, s *store.Store, fallbacks ...Disconnect
 			continue
 		}
 		result, e := ChangeSessionWithFallback(ctx, s, p.session.NAS, p.session.ID, "disconnect", 0, fallback, p.session)
+		if errors.Is(e, errRevocationRecord) {
+			return e
+		}
 		outcome := "retry"
 		if e == nil && result.Acknowledged {
 			outcome = "acknowledged"
 		}
-		next := time.Now().Add(time.Minute).Unix()
-		message := ""
-		if e != nil {
-			message = e.Error()
-		} else if !result.Acknowledged && result.ErrorCause == 406 {
-			message = "NAS reports Unsupported Extension (406); session termination is not confirmed"
-		}
-		if result.Acknowledged {
-			next = 0
-		}
-		if err = s.RecordRevocation(ctx, p.session, result.Code, int64(result.ErrorCause), message, next); err != nil {
-			return err
-		}
-
 		if err = s.Audit(ctx, "revocation", p.session.NAS+"/"+p.session.ID, outcome, "automatic access revocation"); err != nil {
 			return err
 		}

@@ -75,7 +75,11 @@ func (s *Store) journalPublication(ctx context.Context, tx *sql.Tx, actor, batch
 			devices[n.Address] = n
 		}
 	}
-	rows, e := tx.QueryContext(ctx, "SELECT s.nas,s.session_id,s.username,s.status,s.generation,COALESCE(g.policy_id,''),COALESCE(g.token,''),COALESCE(g.reason,'') FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token WHERE s.status IN ('active','stale') ORDER BY s.nas,s.session_id")
+	grantsToObserve, e := s.publicationGrants(ctx, tx, t, devices)
+	if e != nil {
+		return e
+	}
+	rows, e := tx.QueryContext(ctx, "SELECT s.nas,s.session_id,s.username,s.status,s.generation,COALESCE(g.policy_id,''),COALESCE(g.token,''),COALESCE(g.reason,'') FROM sessions s LEFT JOIN access_grants g ON g.token=s.grant_token AND g.nas=s.nas WHERE s.status IN ('active','stale') ORDER BY s.nas,s.session_id")
 	if e != nil {
 		return e
 	}
@@ -142,5 +146,8 @@ func (s *Store) journalPublication(ctx context.Context, tx *sql.Tx, actor, batch
 		snapshot.Changes = append(snapshot.Changes, change)
 		refs = append(refs, DraftRef{d.Kind, d.PolicyID, d.Revision})
 	}
-	return s.appendChange(ctx, tx, ChangeEvent{Action: "published", Actor: actor, BatchID: batch, ReviewID: review}, refs, snapshot)
+	if e = s.appendChange(ctx, tx, ChangeEvent{Action: "published", Actor: actor, BatchID: batch, ReviewID: review}, refs, snapshot); e != nil {
+		return e
+	}
+	return s.startPublicationResult(ctx, tx, batch, review, snapshot, grantsToObserve)
 }

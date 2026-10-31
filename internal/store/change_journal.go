@@ -33,6 +33,7 @@ type ChangeDetail struct {
 	Objects           []ChangeObject
 	Timeline          []ChangeEvent
 	TimelineTruncated bool
+	Result            *PublicationResult `json:",omitempty"`
 }
 type ChangePage struct {
 	Items      []ChangeEvent
@@ -56,6 +57,13 @@ func (s *Store) appendChange(ctx context.Context, tx *sql.Tx, v ChangeEvent, ref
 	_, e = tx.ExecContext(ctx, s.SQL("INSERT INTO change_journal(seq,id,occurred_at,action,actor,review_id,batch_id,schedule_id,summary,detail) SELECT COALESCE(MAX(seq),0)+1,?,?,?,?,?,?,?,?,? FROM change_journal"), v.ID, v.OccurredAt, v.Action, v.Actor, v.ReviewID, v.BatchID, v.ScheduleID, v.Summary, string(raw))
 	if e != nil {
 		return e
+	}
+	if len(refs) == 0 && v.BatchID != "" && strings.HasPrefix(v.Action, "revocation_") {
+		// Outcome events retain the published package's immutable object/cycle links.
+		_, e = tx.ExecContext(ctx, s.SQL("INSERT INTO change_journal_objects(event_id,kind,policy_id,revision,cycle_id) SELECT ?,o.kind,o.policy_id,o.revision,o.cycle_id FROM change_journal_objects o JOIN change_journal j ON j.id=o.event_id WHERE j.batch_id=? AND j.action='published'"), v.ID, v.BatchID)
+		if e != nil {
+			return e
+		}
 	}
 	for _, ref := range refs {
 		var cycle string
@@ -176,6 +184,12 @@ func (s *Store) ChangeJournalDetail(ctx context.Context, id string) (ChangeDetai
 		v.Detail = policyJSON(map[string]any{"Release": release, "ImpactAvailable": false})
 	}
 	out.Event = v
+	if v.BatchID != "" {
+		out.Result, e = s.PublicationResult(ctx, v.BatchID)
+		if e != nil {
+			return out, e
+		}
+	}
 	rows, e := s.DB.QueryContext(ctx, s.SQL("SELECT kind,policy_id,revision,cycle_id FROM change_journal_objects WHERE event_id=? ORDER BY kind,policy_id"), id)
 	if e != nil {
 		return out, e

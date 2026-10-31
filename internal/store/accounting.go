@@ -75,10 +75,13 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 		if err = exec("UPDATE accounting_nas SET reset_at=?,reset_kind=? WHERE nas=?", e.At, e.Kind, e.NAS); err != nil {
 			return err
 		}
-		if err = exec("UPDATE sessions SET status=?,updated_at=?,revoke_next=0 WHERE nas=? AND status IN ('active','stale') AND event_at<=?", "nas-"+e.Kind, now, e.NAS, e.At); err != nil {
+		if err = exec("UPDATE sessions SET status=?,updated_at=?,revoke_next=0 WHERE nas=? AND status IN ('active','stale','disconnect-ack') AND event_at<=?", "nas-"+e.Kind, now, e.NAS, e.At); err != nil {
 			return err
 		}
 		if err = exec("INSERT INTO auth_log(id,occurred_at,source,identity,result,reason) VALUES(?,?,?,?,?,?)", uuid.NewString(), now, "accounting", e.NAS, "nas-"+e.Kind, "Accounting-"+e.Kind); err != nil {
+			return err
+		}
+		if err = s.observePublicationSessions(ctx, tx, e.NAS, now); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -123,6 +126,11 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 	}
 	newGeneration := !exists
 	if exists {
+		if e.Kind == "stop" && token != "" && token != oldToken {
+			if err = s.observeHistoricalPublicationStop(ctx, tx, e, token, now); err != nil {
+				return err
+			}
+		}
 		if e.At < last {
 			return ignore("out-of-order accounting event")
 		}
@@ -148,7 +156,7 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 				// Require Class for tracked sessions: a missing value cannot prove identity.
 				return ignore("missing Class for tracked session")
 			}
-			if oldStatus != "active" && oldStatus != "stale" {
+			if oldStatus != "active" && oldStatus != "stale" && !(oldStatus == "disconnect-ack" && e.Kind == "stop") {
 				if token != "" || e.Kind != "start" || !e.Timed || e.At <= last {
 					return ignore("closed session cannot be resurrected")
 				}
@@ -236,6 +244,9 @@ func (s *Store) ApplyAccounting(ctx context.Context, e AccountingEvent) error {
 			return err
 		}
 	}
+	if err = s.observePublicationSessions(ctx, tx, e.NAS, now); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -247,8 +258,28 @@ func (s *Store) MarkStaleSessions(ctx context.Context) error {
 	return s.Exec(ctx, "DELETE FROM accounting_events WHERE received_at<?", time.Now().Add(-7*24*time.Hour).Unix())
 }
 
-func (s *Store) RecordRevocation(ctx context.Context, v Session, response string, cause int64, message string, next int64) error {
-	return s.Exec(ctx, "UPDATE sessions SET revoke_attempts=revoke_attempts+1,revoke_last=?,revoke_next=CASE WHEN status IN ('active','stale') THEN ? ELSE 0 END,revoke_response=?,revoke_error=?,revoke_cause=? WHERE nas=? AND session_id=? AND generation=?", time.Now().Unix(), next, response, message, cause, v.NAS, v.ID, v.Generation)
+func (s *Store) RecordRevocation(ctx context.Context, v Session, response string, cause int64, message string, next int64, nasResponses ...RevocationNASResponse) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockAccountingNAS(ctx, s, tx, v.NAS); err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	_, err = tx.ExecContext(ctx, s.SQL("UPDATE sessions SET revoke_attempts=revoke_attempts+1,revoke_last=?,revoke_next=CASE WHEN status IN ('active','stale') THEN ? ELSE 0 END,revoke_response=?,revoke_error=?,revoke_cause=? WHERE nas=? AND session_id=? AND generation=?"), now, next, response, message, cause, v.NAS, v.ID, v.Generation)
+	if err != nil {
+		return err
+	}
+	nasResponse := RevocationNASResponse{Code: response, Cause: cause}
+	if len(nasResponses) > 0 {
+		nasResponse = nasResponses[0]
+	}
+	if err = s.recordPublicationRevocation(ctx, tx, v, response, cause, message, next, now, nasResponse); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) RetryRevocation(ctx context.Context, v Session) error {
 	result, err := s.DB.ExecContext(ctx, s.SQL(`UPDATE sessions SET revoke_next=0 WHERE nas=? AND session_id=? AND generation=? AND status IN ('active','stale') AND EXISTS(SELECT 1 FROM access_grants g WHERE g.token=sessions.grant_token AND g.nas=sessions.nas AND g.reason<>'')`), v.NAS, v.ID, v.Generation)
@@ -278,6 +309,9 @@ func (s *Store) ConfirmDisconnect(ctx context.Context, v Session) error {
 	}
 	_, err = tx.ExecContext(ctx, s.SQL("UPDATE sessions SET status='disconnect-ack',updated_at=?,revoke_next=0 WHERE nas=? AND session_id=? AND mac=? AND username=? AND grant_token=? AND generation=? AND status IN ('active','stale')"), time.Now().Unix(), v.NAS, v.ID, v.MAC, v.Username, v.GrantToken, v.Generation)
 	if err != nil {
+		return err
+	}
+	if err = s.observePublicationSessions(ctx, tx, v.NAS, time.Now().Unix()); err != nil {
 		return err
 	}
 	return tx.Commit()

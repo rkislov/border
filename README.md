@@ -8,7 +8,7 @@ Border собирается в **один исполняемый файл `radiu
 
 ## Статус
 
-Текущая ветка разработки — **0.5.9-dev**. Реализованы RADIUS MAB/PAP/EAP-TLS, MS-CHAPv2 для SSH и EAP-MSCHAPv2 для IKEv2 VPN, локальные пользователи и Samba/AD, тенанты, домены, расположения и политики доступа. Административная панель и отдельный портал самообслуживания включают TOTP, управляемую PKI, SMTP/SMS, fingerprint и диагностику сессий. EAP-TLS и EAP-MSCHAPv2 проверяются независимым eapol_test; IKEv2 проверен на strongSwan. PEAP и TTLS пока не реализованы. [Настройка VPN](docs/VPN-EAP-MSCHAPV2.md), [устойчивый стенд](deploy/lab/README.md), [план разработки](docs/ROADMAP.md).
+Текущая ветка разработки — **0.5.9-dev**. Реализованы RADIUS MAB/PAP/EAP-TLS, MS-CHAPv2 для SSH и EAP-MSCHAPv2 для IKEv2 VPN, локальные пользователи и Samba/AD, тенанты, домены, расположения и политики доступа. Административная панель и отдельный портал самообслуживания включают TOTP, управляемую PKI, SMTP/SMS, fingerprint и диагностику сессий. EAP-TLS и EAP-MSCHAPv2 проверяются независимым eapol_test; IKEv2 проверен на strongSwan. PEAPv0-MSCHAPv2 и TTLSv0-PAP реализованы и проверены через Samba AD и эмулятор NAS; испытания физических 802.1X-устройств ещё впереди. [Настройка VPN](docs/VPN-EAP-MSCHAPV2.md), [устойчивый стенд](deploy/lab/README.md), [план разработки](docs/ROADMAP.md).
 
 Реализовано:
 
