@@ -88,6 +88,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	a.listRoutes(mux)
 	a.healthRoutes(mux)
 	a.tenantRoutes(mux)
+	a.backupRoutes(mux)
 	a.fingerbankRoutes(mux)
 	a.routerOSRoutes(mux)
 	a.accessRoutes(mux)

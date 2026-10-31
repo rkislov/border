@@ -7,6 +7,8 @@ module proxy and upstream repositories.
 
 Direct dependencies:
 
+- `filippo.io/age` — BSD-3-Clause; streaming encryption of recovery archives.
+
 - `github.com/go-ldap/ldap/v3` — MIT; AD/FreeIPA LDAP client.
 - `github.com/pquerna/otp` — Apache-2.0; TOTP enrollment and codes.
 

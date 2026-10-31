@@ -49,6 +49,7 @@ func main() {
 func command() *cobra.Command {
 	var driver, dsn string
 	root := &cobra.Command{Use: "radiusd", Short: "Border — RADIUS-сервер и веб-панель", Version: version, SilenceUsage: true}
+	root.AddCommand(backupCommand())
 	root.PersistentFlags().StringVar(&driver, "db-driver", env("BORDER_DB_DRIVER", "sqlite"), "sqlite или pgx")
 	root.PersistentFlags().StringVar(&dsn, "db", env("BORDER_DB", "border.db"), "SQLite путь или PostgreSQL DSN (предпочтительно BORDER_DB)")
 	withStore := func(fn func(*cobra.Command, *store.Store) error) func(*cobra.Command, []string) error {

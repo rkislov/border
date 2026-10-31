@@ -1,0 +1,12 @@
+{
+  "RootDB": "/var/lib/border/border.db",
+  "TenantDir": "/var/lib/border/tenants",
+  "ConfigDir": "/etc/border",
+  "EnvFile": "/etc/border/border.env",
+  "CertDir": "/etc/border/certs",
+  "Binary": "/usr/local/bin/radiusd",
+  "ExtraFiles": ["/etc/systemd/system/border.service", "/etc/systemd/system/border-backup.service", "/etc/systemd/system/border-backup.timer", "/etc/border-backup.json"],
+  "OutputDir": "/var/backups/border",
+  "IdentityFile": "/var/lib/private/border-backup/identity.txt",
+  "MaxBytes": 4294967296
+}
