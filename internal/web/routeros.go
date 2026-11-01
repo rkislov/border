@@ -14,7 +14,7 @@ func (a *app) routerOSRoutes(m *http.ServeMux) {
 			http.Error(w, e.Error(), 503)
 			return
 		}
-		reply(w, map[string]any{"Enabled": c.Enabled, "Address": c.Address, "Username": c.Username, "HostKey": c.HostKey, "HasPassword": c.Password != ""})
+		reply(w, map[string]any{"GuestHotspot": c.GuestHotspot, "Enabled": c.Enabled, "Address": c.Address, "Username": c.Username, "HostKey": c.HostKey, "HasPassword": c.Password != ""})
 	})
 	m.HandleFunc("POST /api/routeros", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {

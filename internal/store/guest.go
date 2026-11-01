@@ -12,6 +12,8 @@ type GuestPolicy struct {
 	MaxPerHour int
 }
 type GuestSession struct {
+	ActivationState, ActivationError                                  string
+	ActivationAttempts                                                int
 	ID, NAS, MAC, Identity, Method, MaskedContact, PolicyID, DomainID string
 	VLAN                                                              int
 	Expires                                                           int64
@@ -48,7 +50,7 @@ func (s *Store) SetGuestPolicy(ctx context.Context, p GuestPolicy) error {
 	return tx.Commit()
 }
 func (s *Store) GuestSessions(ctx context.Context) ([]GuestSession, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT g.id,g.nas,g.mac,g.identity,g.method,g.masked_contact,g.policy_id,g.domain_id,COALESCE(n.vlan,l.vlan,0),g.expires_at FROM guest_authorizations g LEFT JOIN access_policies p ON p.id=g.policy_id JOIN nas a ON a.address=g.nas LEFT JOIN nas_segments n ON n.nas=g.nas AND n.segment_id=p.segment_id LEFT JOIN location_segments l ON l.location_id=a.location_id AND l.segment_id=p.segment_id ORDER BY g.expires_at DESC LIMIT 200")
+	rows, err := s.DB.QueryContext(ctx, "SELECT g.id,g.nas,g.mac,g.identity,g.method,g.masked_contact,g.policy_id,g.domain_id,COALESCE(n.vlan,l.vlan,0),g.expires_at,g.activation_state,g.activation_attempts,g.activation_error FROM guest_authorizations g LEFT JOIN access_policies p ON p.id=g.policy_id JOIN nas a ON a.address=g.nas LEFT JOIN nas_segments n ON n.nas=g.nas AND n.segment_id=p.segment_id LEFT JOIN location_segments l ON l.location_id=a.location_id AND l.segment_id=p.segment_id ORDER BY g.expires_at DESC LIMIT 200")
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +58,7 @@ func (s *Store) GuestSessions(ctx context.Context) ([]GuestSession, error) {
 	out := []GuestSession{}
 	for rows.Next() {
 		var g GuestSession
-		if err = rows.Scan(&g.ID, &g.NAS, &g.MAC, &g.Identity, &g.Method, &g.MaskedContact, &g.PolicyID, &g.DomainID, &g.VLAN, &g.Expires); err != nil {
+		if err = rows.Scan(&g.ID, &g.NAS, &g.MAC, &g.Identity, &g.Method, &g.MaskedContact, &g.PolicyID, &g.DomainID, &g.VLAN, &g.Expires, &g.ActivationState, &g.ActivationAttempts, &g.ActivationError); err != nil {
 			return nil, err
 		}
 		out = append(out, g)

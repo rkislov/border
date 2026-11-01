@@ -55,9 +55,13 @@ func Describe(dictionary string) (Capabilities, bool) {
 	add("disconnect", "Отзыв доступа", true, "RFC 5176, общий секрет, доступ к CoA-порту. Связь с разрешением обязательна для автоматического отзыва; ACK не гарантирован словарём.")
 	add("coa_vlan", "Смена VLAN через CoA", true, "NAS должен поддерживать CoA и tunnel-атрибуты для данного вида сессии; требуется проверка на модели.")
 	add("radsec", "RadSec", false, "Не реализовано; RADIUS UDP размещать в защищённой сети.")
+	add("guest_activation", "Автоматическое открытие гостевого доступа", dictionary == "mikrotik", "Адаптер RouterOS HotSpot через SSH с проверкой ключа. HotSpot на VLAN-интерфейсе политики, RADIUS и Accounting/Class обязательны. Общая очередь SMS/email/OIDC; другие captive NAS требуют отдельного адаптера.")
 	if dictionary == "mikrotik" || dictionary == "strongswan" {
 		for i := range c.Features {
 			f := &c.Features[i]
+			if dictionary == "mikrotik" && f.ID == "guest_activation" {
+				f.Verification = "Лаборатория: CHR 7.23.8 HotSpot, 01.11.2026"
+			}
 			if f.ID == "vpn" || f.ID == "accounting" || f.ID == "disconnect" {
 				f.Verification = "Лаборатория: strongSwan IKEv2, 30.10.2026"
 				if dictionary == "mikrotik" {

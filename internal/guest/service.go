@@ -25,6 +25,7 @@ import (
 )
 
 type Service struct {
+	Activate          func(context.Context, store.GuestAuthorization, int) (bool, error)
 	oidcFlows         map[string]oidcFlow
 	oidcStarts        map[string]time.Time
 	oidcTestClient    *http.Client
@@ -49,6 +50,8 @@ type Challenge struct {
 	Channel       string
 }
 type Grant struct {
+	ActivationState   string
+	StatusToken       string
 	Expires           int64
 	VLAN              int
 	ReconnectRequired bool

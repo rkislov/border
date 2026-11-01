@@ -39,6 +39,9 @@ func (s *Service) authorizeGuest(ctx context.Context, g store.GuestAuthorization
 	}
 	g.ID = randomID()
 	g.Expires = expires
+	if s.Activate != nil {
+		g.ActivationState = "pending"
+	}
 	if err = s.Store.SaveGuestAuthorization(ctx, g); err != nil {
 		return Grant{}, err
 	}
@@ -47,7 +50,9 @@ func (s *Service) authorizeGuest(ctx context.Context, g store.GuestAuthorization
 		_ = s.Store.Exec(ctx, "DELETE FROM guest_authorizations WHERE id=?", g.ID)
 		return Grant{}, denied
 	}
-	// Fresh RADIUS authentication is mandatory for Class/Accounting correlation.
-	// Automatic NAS reauthentication belongs to the separate captive NAS adapter.
-	return Grant{Expires: g.Expires, VLAN: b.VLAN, ReconnectRequired: true}, nil
+	state := "manual"
+	if s.Activate != nil {
+		state = "pending"
+	}
+	return Grant{Expires: g.Expires, VLAN: b.VLAN, ReconnectRequired: state == "manual", ActivationState: state, StatusToken: g.ID + "." + s.digest("guest-status", g.ID)}, nil
 }

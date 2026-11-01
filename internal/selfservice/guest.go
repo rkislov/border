@@ -9,6 +9,27 @@ import (
 
 func (p *Portal) guestRoutes(mux *http.ServeMux) {
 	p.guestOIDCRoutes(mux)
+	mux.HandleFunc("POST /api/guest/activation", func(w http.ResponseWriter, r *http.Request) {
+		if p.Guest == nil {
+			http.Error(w, "portal unavailable", 503)
+			return
+		}
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if !p.allow("guest-status:"+ip, 600) {
+			http.Error(w, "too many requests", 429)
+			return
+		}
+		var v struct{ Token string }
+		if !decode(w, r, &v) {
+			return
+		}
+		status, e := p.Guest.ActivationStatus(r.Context(), v.Token)
+		if e != nil {
+			http.Error(w, "guest authorization unavailable", 403)
+			return
+		}
+		jsonReply(w, status)
+	})
 	mux.HandleFunc("POST /api/guest/design", func(w http.ResponseWriter, r *http.Request) {
 		if p.Guest == nil {
 			http.Error(w, "portal unavailable", 503)

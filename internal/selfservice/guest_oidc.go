@@ -20,7 +20,7 @@ type oidcResult struct {
 	Until   int64
 }
 
-var oidcResultPage = template.Must(template.New("result").Parse(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Border · Гостевой доступ</title><link rel="stylesheet" href="{{.Style}}"></head><body><header><b>◈ BORDER</b><span>Гостевой Wi-Fi</span></header><main><section class="panel"><h1>{{.Title}}</h1><p role="status">{{.Message}}</p><p>{{.Expiry}}</p></section></main></body></html>`))
+var oidcResultPage = template.Must(template.New("result").Parse(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Border · Гостевой доступ</title><link rel="stylesheet" href="{{.Style}}"><script defer src="{{.Script}}"></script></head><body><header><b>◈ BORDER</b><span>Гостевой Wi-Fi</span></header><main><section class="panel"><h1>{{.Title}}</h1><p role="status" id="activation-status" data-token="{{.Token}}" data-endpoint="{{.Endpoint}}">{{.Message}}</p><p>{{.Expiry}}</p></section></main></body></html>`))
 
 func (p *Portal) guestOIDCRoutes(mux *http.ServeMux) {
 	cookie := func(name, value string, age int) *http.Cookie {
@@ -96,10 +96,15 @@ func (p *Portal) guestOIDCRoutes(mux *http.ServeMux) {
 			clear(raw)
 		}
 		http.SetCookie(w, cookie("__Secure-border-oidc-result", "", -1))
+		statusToken := ""
 		title, message, expiry := "Вход не завершён", "Откройте портал заново через гостевую сеть и повторите вход.", ""
 		if result.Success && result.Until > time.Now().Unix() && result.Grant.Expires > time.Now().Unix() {
 			title = "Вход подтверждён"
 			message = "Переподключитесь к Wi-Fi: устройство проверит политику доступа и применит настройки сети."
+			if result.Grant.StatusToken != "" {
+				statusToken = result.Grant.StatusToken
+				message = "Вход подтверждён. Открываем доступ к сети…"
+			}
 			expiry = "Доступ разрешён до " + time.Unix(result.Grant.Expires, 0).UTC().Format("02.01.2006 15:04 UTC")
 		}
 		u, _ := url.Parse(p.Guest.PublicURL)
@@ -108,6 +113,6 @@ func (p *Portal) guestOIDCRoutes(mux *http.ServeMux) {
 			style = strings.TrimSuffix(u.Path, "/") + style
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = oidcResultPage.Execute(w, map[string]string{"Title": title, "Message": message, "Expiry": expiry, "Style": style})
+		_ = oidcResultPage.Execute(w, map[string]string{"Title": title, "Message": message, "Expiry": expiry, "Style": style, "Token": statusToken, "Script": strings.TrimSuffix(style, "style.css") + "guest-activation.js", "Endpoint": strings.TrimSuffix(style, "style.css") + "api/guest/activation"})
 	})
 }

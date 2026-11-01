@@ -367,6 +367,9 @@ func command() *cobra.Command {
 		stopNotifications := notifier.StartPolicyDeliveries(ctx)
 		defer stopNotifications()
 		if guests != nil {
+			guests.Activate = management.ActivateGuest
+			stopActivations := guests.StartActivations(ctx)
+			defer stopActivations()
 			stopCleanup := guests.StartCleanup(ctx)
 			defer stopCleanup()
 		}

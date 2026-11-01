@@ -102,6 +102,7 @@ func (s *Store) EvaluateGuestAccess(ctx context.Context, b *BoundPolicy, nas, ma
 }
 
 type GuestAuthorization struct {
+	ActivationState                                                                                                            string
 	ID, NAS, MAC, Identity, Method, MaskedContact, ProviderScope, ProviderID, ProviderRevision, DomainID, PolicyID, PolicyHash string
 	Expires                                                                                                                    int64
 }
@@ -131,6 +132,9 @@ func (s *Store) GuestAuthorization(ctx context.Context, nas, mac string) (GuestA
 // One authorization per NAS/MAC, independent of how the identity was verified.
 // Re-authenticating via another method retires only that device's old grants.
 func (s *Store) SaveGuestAuthorization(ctx context.Context, g GuestAuthorization) error {
+	if g.ActivationState != "pending" {
+		g.ActivationState = "manual"
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -148,7 +152,7 @@ func (s *Store) SaveGuestAuthorization(ctx context.Context, g GuestAuthorization
 	if _, err = tx.ExecContext(ctx, s.SQL("UPDATE access_grants SET reason='guest reauthenticated',next_attempt=0 WHERE reason='' AND guest_authorization_id IN (SELECT id FROM guest_authorizations WHERE nas=? AND mac=?)"), g.NAS, g.MAC); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, s.SQL("INSERT INTO guest_authorizations(id,nas,mac,identity,method,masked_contact,provider_scope,provider_id,provider_revision,domain_id,policy_id,policy_hash,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(nas,mac) DO UPDATE SET id=excluded.id,identity=excluded.identity,method=excluded.method,masked_contact=excluded.masked_contact,provider_scope=excluded.provider_scope,provider_id=excluded.provider_id,provider_revision=excluded.provider_revision,domain_id=excluded.domain_id,policy_id=excluded.policy_id,policy_hash=excluded.policy_hash,expires_at=excluded.expires_at"), g.ID, g.NAS, g.MAC, g.Identity, g.Method, g.MaskedContact, g.ProviderScope, g.ProviderID, g.ProviderRevision, g.DomainID, g.PolicyID, g.PolicyHash, g.Expires); err != nil {
+	if _, err = tx.ExecContext(ctx, s.SQL("INSERT INTO guest_authorizations(id,nas,mac,identity,method,masked_contact,provider_scope,provider_id,provider_revision,domain_id,policy_id,policy_hash,expires_at,activation_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(nas,mac) DO UPDATE SET id=excluded.id,identity=excluded.identity,method=excluded.method,masked_contact=excluded.masked_contact,provider_scope=excluded.provider_scope,provider_id=excluded.provider_id,provider_revision=excluded.provider_revision,domain_id=excluded.domain_id,policy_id=excluded.policy_id,policy_hash=excluded.policy_hash,expires_at=excluded.expires_at,activation_state=excluded.activation_state,activation_attempts=0,activation_next=0,activation_error=''"), g.ID, g.NAS, g.MAC, g.Identity, g.Method, g.MaskedContact, g.ProviderScope, g.ProviderID, g.ProviderRevision, g.DomainID, g.PolicyID, g.PolicyHash, g.Expires, g.ActivationState); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, s.SQL("INSERT INTO auth_log(id,occurred_at,source,identity,result,reason) VALUES(?,?,?,?,?,?)"), uuid.NewString(), time.Now().Unix(), "guest-"+g.Method, g.Identity, "verified", "policy "+g.PolicyID+" NAS "+g.NAS+" MAC "+g.MAC); err != nil {

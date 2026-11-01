@@ -168,6 +168,7 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 	if err != nil {
 		return fail(err)
 	}
+	guests.Activate = (&routeros.Service{Store: s, Vault: codes.Vault}).ActivateGuest
 	r.guest = guests
 	notifications := &notification.Service{Store: s, Vault: codes.Vault, Tenant: id}
 	codes.Mail = notifications
@@ -204,9 +205,10 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 	r.Portal = selfservice.New(identities, codes, manager, portalURL, guests).Handler()
 	// Manager.Close owns the cleanup lifecycle, independent of create request cancellation.
 	stopGuests := guests.StartCleanup(context.Background())
+	stopActivations := guests.StartActivations(context.Background())
 	stopRevocations := aaa.StartRevocationsWithFallback(context.Background(), s, (&routeros.Service{Store: s, Vault: codes.Vault}).Disconnect, identities.SyncAccountStatus)
 	stopNotifications := notifications.StartPolicyDeliveries(context.Background())
-	r.stop = func() { stopNotifications(); stopRevocations(); stopGuests() }
+	r.stop = func() { stopActivations(); stopNotifications(); stopRevocations(); stopGuests() }
 	return r, nil
 }
 func (r *Runtime) close() {

@@ -58,11 +58,20 @@ func TestOIDCCallbackHTTPBoundaryAndCleanResult(t *testing.T) {
 	if !strings.Contains(result.Body.String(), "Вход не завершён") || result.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(result.Body.String())
 	}
-	raw, _ := json.Marshal(oidcResult{Success: true, Until: time.Now().Unix() + 60, Grant: guest.Grant{Expires: time.Now().Unix() + 600}})
+	for _, origin := range []string{"", "https://evil.example"} {
+		w := call("POST", "/api/guest/activation", `{"Token":"forged"}`, origin)
+		if w.Code != 403 || strings.Contains(w.Body.String(), "forged") {
+			t.Fatal("activation boundary", w.Code)
+		}
+	}
+	raw, _ := json.Marshal(oidcResult{Success: true, Until: time.Now().Unix() + 60, Grant: guest.Grant{Expires: time.Now().Unix() + 600, StatusToken: "receipt-for-polling", ActivationState: "pending"}})
 	success := &http.Cookie{Name: "__Secure-border-oidc-result", Value: guests.Vault.Seal(raw, "guest-oidc-result")}
 	result = call("GET", "/guest/oidc/result", "", "", success)
 	if !strings.Contains(result.Body.String(), "Вход подтверждён") {
 		t.Fatal(result.Body.String())
+	}
+	if !strings.Contains(result.Body.String(), `data-token="receipt-for-polling"`) || !strings.Contains(result.Body.String(), `/portal/lab/api/guest/activation`) || !strings.Contains(result.Body.String(), `/portal/lab/guest-activation.js`) {
+		t.Fatal("missing tenant scoped activation polling", result.Body.String())
 	}
 	success.Value += "tamper"
 	result = call("GET", "/guest/oidc/result", "", "", success)

@@ -23,6 +23,7 @@ import (
 // HostKey is an independently verified OpenSSH SHA256 fingerprint.
 type Config struct {
 	Enabled                              bool
+	GuestHotspot                         string
 	Address, Username, Password, HostKey string
 }
 type Service struct {
@@ -57,6 +58,9 @@ func (s *Service) Save(ctx context.Context, nas string, v Config) error {
 	var dictionary string
 	if err := s.Store.Row(ctx, "SELECT dictionary FROM nas WHERE address=?", nas).Scan(&dictionary); err != nil || dictionary != "mikrotik" {
 		return fmt.Errorf("registered MikroTik NAS required")
+	}
+	if len(v.GuestHotspot) > 64 || strings.ContainsAny(v.GuestHotspot, "\r\n\x00") {
+		return fmt.Errorf("invalid HotSpot server name")
 	}
 	old, err := s.Config(ctx, nas)
 	if err != nil {
@@ -180,9 +184,12 @@ func (s *Service) Disconnect(ctx context.Context, v store.Session) (bool, error)
 	if e != nil || !cfg.Enabled {
 		return false, e
 	}
-	var dictionary, mode, identity string
-	if e = s.Store.Row(ctx, "SELECT n.dictionary,p.mode,g.username FROM nas n JOIN access_grants g ON g.nas=n.address JOIN access_policies p ON p.id=g.policy_id WHERE n.address=? AND g.token=?", v.NAS, v.GrantToken).Scan(&dictionary, &mode, &identity); e != nil {
+	var dictionary, mode, identity, guestID string
+	if e = s.Store.Row(ctx, "SELECT n.dictionary,p.mode,g.username,g.guest_authorization_id FROM nas n JOIN access_grants g ON g.nas=n.address JOIN access_policies p ON p.id=g.policy_id WHERE n.address=? AND g.token=?", v.NAS, v.GrantToken).Scan(&dictionary, &mode, &identity, &guestID); e != nil {
 		return false, e
+	}
+	if dictionary == "mikrotik" && mode == "network" && guestID != "" {
+		return s.disconnectGuest(ctx, cfg, v)
 	}
 	// Class binds the accounting session to a canonical domain identity, while
 	// RouterOS login accounting may retain the original unqualified username.
