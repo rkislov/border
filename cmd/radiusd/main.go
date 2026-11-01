@@ -214,25 +214,7 @@ func command() *cobra.Command {
 			guests.AvailableChannels = notifications.GuestChannels
 			guests.SenderForContext = notifications.GuestSMSSender
 			guests.PublicURL = strings.TrimSuffix(publicURL, "/") + "/portal/default"
-			guests.Reconnect = func(ctx context.Context, nas, id, mac string, vlan int) error {
-				var current store.Session
-				current.NAS = nas
-				current.ID = id
-				if err := s.Row(ctx, "SELECT mac,username,updated_at FROM sessions WHERE nas=? AND session_id=? AND status='active'", nas, id).Scan(&current.MAC, &current.Username, &current.Updated); err != nil {
-					return err
-				}
-				if current.MAC != mac {
-					return fmt.Errorf("NAS session does not match guest device")
-				}
-				result, err := aaa.ChangeSession(ctx, s, nas, id, "vlan", vlan, current)
-				if err != nil {
-					return err
-				}
-				if !result.Acknowledged {
-					return fmt.Errorf("NAS rejected CoA")
-				}
-				return nil
-			}
+
 			managedPKI = &pki.Manager{Store: s, Vault: codes.Vault}
 			acmeClient, err = pki.NewACME(c.Context(), managedPKI)
 			if err != nil {

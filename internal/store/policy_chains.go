@@ -23,8 +23,11 @@ func (a AuthenticationPolicy) Chain() []string {
 	return out
 }
 func (a AuthenticationPolicy) ValidateChain() error {
-	if a.Source == "oidc" && (a.RequireTOTP || a.EAPMethod != "" || len(a.Chain()) != 1 || a.Chain()[0] != "primary") {
-		return fmt.Errorf("OIDC requires the portal primary check only")
+	if err := a.ValidateGuestMethods(); err != nil {
+		return err
+	}
+	if (a.Source == "oidc" || a.Source == "guest") && (a.RequireTOTP || a.EAPMethod != "" || len(a.Chain()) != 1 || a.Chain()[0] != "primary") {
+		return fmt.Errorf("guest portal requires the primary check only")
 	}
 	if a.EAPMethod != "" {
 		if (a.EAPMethod != "peap" && a.EAPMethod != "ttls") || (a.Source != "local" && a.Source != "directory") {
@@ -142,7 +145,7 @@ func (s *Store) saveNASPoliciesTx(ctx context.Context, tx *sql.Tx, set NASPolicy
 			return fmt.Errorf("unknown access policy")
 		}
 		expected := "pap"
-		if source == "mab" || source == "oidc" {
+		if source == "mab" || source == "oidc" || source == "guest" {
 			expected = "mab"
 		}
 		if source == "eap_tls" {
@@ -229,7 +232,7 @@ func (s *Store) selectPolicy(ctx context.Context, nas string, request PolicyRequ
 			return nil, true, err
 		}
 		expected := "pap"
-		if p.Authentication.Source == "mab" || p.Authentication.Source == "oidc" {
+		if p.Authentication.Source == "mab" || p.Authentication.Source == "oidc" || p.Authentication.Source == "guest" {
 			expected = "mab"
 		}
 		if p.Authentication.Source == "eap_tls" || p.Authentication.EAPMethod != "" {

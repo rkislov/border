@@ -49,8 +49,8 @@ func (s *Store) policySnapshot(ctx context.Context, tx *sql.Tx, kind, id string)
 	switch kind {
 	case "authentication":
 		var a AuthenticationPolicy
-		var steps string
-		e := tx.QueryRowContext(ctx, s.SQL("SELECT id,name,source,COALESCE(domain_id,''),require_totp,enabled,steps,eap_method FROM authentication_policies WHERE id=?"), id).Scan(&a.ID, &a.Name, &a.Source, &a.DomainID, &a.RequireTOTP, &a.Enabled, &steps, &a.EAPMethod)
+		var steps, guestMethods string
+		e := tx.QueryRowContext(ctx, s.SQL("SELECT id,name,source,COALESCE(domain_id,''),require_totp,enabled,steps,eap_method,guest_methods FROM authentication_policies WHERE id=?"), id).Scan(&a.ID, &a.Name, &a.Source, &a.DomainID, &a.RequireTOTP, &a.Enabled, &steps, &a.EAPMethod, &guestMethods)
 		if e == sql.ErrNoRows {
 			return json.RawMessage("null"), nil
 		}
@@ -58,6 +58,9 @@ func (s *Store) policySnapshot(ctx context.Context, tx *sql.Tx, kind, id string)
 			return nil, e
 		}
 		if e = json.Unmarshal([]byte(steps), &a.Steps); e != nil {
+			return nil, e
+		}
+		if e = json.Unmarshal([]byte(guestMethods), &a.GuestMethods); e != nil {
 			return nil, e
 		}
 		return policyJSON(a), nil

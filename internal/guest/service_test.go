@@ -40,6 +40,24 @@ func fixture(t *testing.T) (*Service, *fakeSMS, string) {
 			t.Fatal(err)
 		}
 	}
+	if err = db.Exec(ctx, "INSERT INTO network_segments VALUES('contact-network','Guest contacts')"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SaveAuthentication(ctx, store.AuthenticationPolicy{ID: "contact-auth", Name: "Guest contacts", Source: "guest", GuestMethods: []string{"sms", "email", "oidc"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SaveAccess(ctx, store.AccessPolicy{ID: "contact-access", Name: "Guest access", AuthenticationID: "contact-auth", Mode: "network", SegmentID: "contact-network", SessionSeconds: 3600, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SaveMapping(ctx, store.SegmentMapping{NAS: "192.0.2.1", SegmentID: "contact-network", VLAN: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SaveRules(ctx, store.RuleSet{PolicyID: "contact-access", Enabled: true, Rules: []store.AccessRule{{ID: "guests", Name: "Guests", Effect: "allow", Enabled: true, AllAuthenticated: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Exec(ctx, "UPDATE nas SET access_policy_id='contact-access' WHERE address='192.0.2.1'"); err != nil {
+		t.Fatal(err)
+	}
 	s, err := New(db, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -79,10 +97,10 @@ func TestGuestGrantBindingReplayAndPrivacy(t *testing.T) {
 	if _, err = s.Confirm(ctx, c.ID, f.code); err == nil {
 		t.Fatal("replay")
 	}
-	if _, _, err = s.Store.GuestAccess(ctx, "192.0.2.1", "00:11:22:33:44:55"); err != nil {
+	if _, err = s.Store.GuestAuthorization(ctx, "192.0.2.1", "00:11:22:33:44:55"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.Store.GuestAccess(ctx, "192.0.2.2", "00:11:22:33:44:55"); err == nil {
+	if _, err = s.Store.GuestAuthorization(ctx, "192.0.2.2", "00:11:22:33:44:55"); err == nil {
 		t.Fatal("cross-NAS grant")
 	}
 }
@@ -103,7 +121,7 @@ func TestGuestFailures(t *testing.T) {
 					t.Fatal("accepted invalid request")
 				}
 				var n int
-				s.Store.Row(ctx, "SELECT COUNT(*) FROM guest_sessions").Scan(&n)
+				s.Store.Row(ctx, "SELECT COUNT(*) FROM guest_authorizations").Scan(&n)
 				if n != 0 {
 					t.Fatal("unexpected grant")
 				}

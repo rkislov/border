@@ -46,7 +46,7 @@ func (s *Service) StartOIDC(ctx context.Context, token, id string) (OIDCStart, e
 		return OIDCStart{}, err
 	}
 	state, browser := randomID(), randomID()
-	f := oidcFlow{redirect: r, config: c, policyHash: store.OIDCPolicyHash(b), browser: s.digest("oidc-browser", browser), nonce: randomID(), verifier: oauth2.GenerateVerifier(), expires: time.Now().Add(5 * time.Minute)}
+	f := oidcFlow{redirect: r, config: c, policyHash: store.GuestPolicyHash(b), browser: s.digest("oidc-browser", browser), nonce: randomID(), verifier: oauth2.GenerateVerifier(), expires: time.Now().Add(5 * time.Minute)}
 	s.mu.Lock()
 	if s.oidcFlows == nil {
 		s.oidcFlows = map[string]oidcFlow{}
@@ -144,7 +144,7 @@ func (s *Service) FinishOIDC(ctx context.Context, state, browser, code, provider
 	}
 	ctx = oidc.ClientContext(ctx, f.client)
 	b, c, err := s.Store.GuestOIDCPolicy(ctx, f.redirect.NAS, f.redirect.MAC, f.redirect.Domain, f.config.ID)
-	if err != nil || c.Scope != f.config.Scope || c.Revision != f.config.Revision || store.OIDCPolicyHash(b) != f.policyHash {
+	if err != nil || c.Scope != f.config.Scope || c.Revision != f.config.Revision || store.GuestPolicyHash(b) != f.policyHash {
 		return Grant{}, denied
 	}
 	tokens, err := f.oauth.Exchange(ctx, code, oauth2.VerifierOption(f.verifier))
@@ -178,50 +178,9 @@ func (s *Service) FinishOIDC(ctx context.Context, state, browser, code, provider
 	}
 	// Recheck after remote calls. No email-based account linking or local MFA bypass.
 	b, c, err = s.Store.GuestOIDCPolicy(ctx, f.redirect.NAS, f.redirect.MAC, f.redirect.Domain, f.config.ID)
-	if err != nil || c.Scope != f.config.Scope || c.Revision != f.config.Revision || store.OIDCPolicyHash(b) != f.policyHash {
+	if err != nil || c.Scope != f.config.Scope || c.Revision != f.config.Revision || store.GuestPolicyHash(b) != f.policyHash {
 		return Grant{}, denied
 	}
 	user := OIDCIdentity(verified.Issuer, verified.Subject)
-	if err = s.Store.EvaluateGuestOIDC(ctx, b, f.redirect.NAS, f.redirect.MAC, user); err != nil {
-		return Grant{}, denied
-	}
-	ttl, err := b.Timeout(time.Now())
-	if err != nil {
-		return Grant{}, denied
-	}
-	expires := min(time.Now().Unix()+int64(ttl), verified.Expiry.Unix())
-	if expires <= time.Now().Unix() {
-		return Grant{}, denied
-	}
-	id := randomID()
-	tx, err := s.Store.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return Grant{}, err
-	}
-	defer tx.Rollback()
-	// Atomically guard provider revision and latch any replaced device authorization.
-	if _, err = tx.ExecContext(ctx, "UPDATE guest_policy SET enabled=enabled WHERE id=1"); err != nil {
-		return Grant{}, err
-	}
-	var revision string
-	if err = tx.QueryRowContext(ctx, s.Store.SQL("SELECT revision FROM guest_oidc_providers WHERE scope=? AND id=?"), c.Scope, c.ID).Scan(&revision); err != nil || revision != c.Revision {
-		return Grant{}, denied
-	}
-	if _, err = tx.ExecContext(ctx, s.Store.SQL("UPDATE access_grants SET reason='OIDC guest reauthenticated',next_attempt=0 WHERE reason='' AND guest_oidc_id IN (SELECT id FROM guest_oidc_sessions WHERE nas=? AND mac=?)"), f.redirect.NAS, f.redirect.MAC); err != nil {
-		return Grant{}, err
-	}
-	if _, err = tx.ExecContext(ctx, s.Store.SQL("INSERT INTO guest_oidc_sessions(id,nas,mac,identity,provider_scope,provider_id,provider_revision,domain_id,policy_id,policy_hash,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(nas,mac) DO UPDATE SET id=excluded.id,identity=excluded.identity,provider_scope=excluded.provider_scope,provider_id=excluded.provider_id,provider_revision=excluded.provider_revision,domain_id=excluded.domain_id,policy_id=excluded.policy_id,policy_hash=excluded.policy_hash,expires_at=excluded.expires_at"), id, f.redirect.NAS, f.redirect.MAC, user, c.Scope, c.ID, c.Revision, f.redirect.Domain, b.Access.ID, f.policyHash, expires); err != nil {
-		return Grant{}, err
-	}
-	if err = tx.Commit(); err != nil {
-		return Grant{}, err
-	}
-	if _, err = s.Store.GuestOIDCSession(ctx, f.redirect.NAS, f.redirect.MAC); err != nil {
-		_ = s.Store.Exec(ctx, "DELETE FROM guest_oidc_sessions WHERE id=?", id)
-		return Grant{}, denied
-	}
-	_ = s.Store.Audit(ctx, "guest-oidc", user, "authorized", "provider "+c.ID+" policy "+b.Access.ID+" NAS "+f.redirect.NAS+" MAC "+f.redirect.MAC)
-	// Require fresh RADIUS authentication so Class and Accounting bind the new grant.
-	// A VLAN-only CoA on the old session would skip that binding.
-	return Grant{Expires: expires, VLAN: b.VLAN, ReconnectRequired: true}, nil
+	return s.authorizeGuest(ctx, store.GuestAuthorization{NAS: f.redirect.NAS, MAC: f.redirect.MAC, DomainID: f.redirect.Domain, Method: "oidc", Identity: user, ProviderScope: c.Scope, ProviderID: c.ID, ProviderRevision: c.Revision, PolicyID: b.Access.ID, PolicyHash: f.policyHash, Expires: verified.Expiry.Unix()})
 }

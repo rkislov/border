@@ -61,7 +61,7 @@ func TestEmailChallengeLifecycle(t *testing.T) {
 		t.Fatal("replayed code")
 	}
 	var masked string
-	if err = s.Store.Row(ctx, "SELECT masked_phone FROM guest_sessions WHERE nas='192.0.2.1'").Scan(&masked); err != nil || masked != "a***@example.org" {
+	if err = s.Store.Row(ctx, "SELECT masked_contact FROM guest_authorizations WHERE nas='192.0.2.1'").Scan(&masked); err != nil || masked != "a***@example.org" {
 		t.Fatal(masked, err)
 	}
 }

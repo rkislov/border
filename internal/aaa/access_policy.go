@@ -28,7 +28,7 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 	effective := c
 	effective.Mode = b.Access.Mode
 	valid = valid && effective.Validate() == nil
-	if b.Access.Mode != "network" && (b.Authentication.Source == "mab" || b.Authentication.Source == "eap_tls") {
+	if b.Access.Mode != "network" && (b.Authentication.Source == "mab" || b.Authentication.Source == "eap_tls" || b.Authentication.Source == "oidc" || b.Authentication.Source == "guest") {
 		valid = false
 	}
 	a := b.Authentication
@@ -52,9 +52,9 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 		return nil, parseErr
 	}
 	msSuccess := ""
-	var oidcSession store.GuestOIDCSession
+	var guestSession store.GuestAuthorization
 	if valid {
-		if a.Source == "oidc" {
+		if a.Source == "oidc" || a.Source == "guest" {
 			mac, e := NormalizeMAC(rfc2865.UserName_GetString(p))
 			calling := rfc2865.CallingStationID_GetString(p)
 			if calling != "" {
@@ -65,11 +65,11 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 			}
 			valid = e == nil && ms == nil && len(p.Attributes.Get(79)) == 0 && len(p.Attributes.Get(3)) == 0 && b.Access.Mode == "network"
 			if valid {
-				oidcSession, e = s.GuestOIDCSession(ctx, host, mac)
-				valid = e == nil && oidcSession.PolicyHash == store.OIDCPolicyHash(b)
-				user = oidcSession.Identity
+				guestSession, e = s.GuestAuthorization(ctx, host, mac)
+				valid = e == nil && guestSession.PolicyHash == store.GuestPolicyHash(b)
+				user = guestSession.Identity
 			}
-			reason = "OIDC guest authorization"
+			reason = "guest portal authorization"
 		} else if ms != nil {
 			user, msSuccess, valid, reason = authenticateMSCHAP(ctx, s, p, b, o, ms)
 			if valid && b.Authentication.Source == "directory" {
@@ -96,8 +96,8 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 			valid = err == nil
 		}
 	}
-	if valid && a.Source == "oidc" {
-		remaining := oidcSession.Expires - time.Now().Unix()
+	if valid && (a.Source == "oidc" || a.Source == "guest") {
+		remaining := guestSession.Expires - time.Now().Unix()
 		valid = remaining > 0
 		if valid && remaining < int64(ttl) {
 			ttl = uint32(remaining)
@@ -143,13 +143,13 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 	if valid {
 		var token string
 		var e error
-		if a.Source == "oidc" {
-			token, e = s.NewGuestOIDCGrant(ctx, oidcSession, b, time.Now().Unix()+int64(ttl))
+		if a.Source == "oidc" || a.Source == "guest" {
+			token, e = s.NewGuestGrant(ctx, guestSession, b, time.Now().Unix()+int64(ttl))
 		} else {
 			token, e = s.NewPolicyGrant(ctx, host, user, b, time.Now().Unix()+int64(ttl))
 		}
 		if e == sql.ErrNoRows {
-			return nil, fmt.Errorf("OIDC authorization expired")
+			return nil, fmt.Errorf("guest authorization expired")
 		}
 		if e != nil {
 			return nil, e

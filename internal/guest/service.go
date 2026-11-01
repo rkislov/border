@@ -37,7 +37,6 @@ type Service struct {
 	key               []byte
 	SMS               sms.SMSProvider
 	SenderForNAS      func(context.Context, string) (sms.SMSProvider, error)
-	Reconnect         func(context.Context, string, string, string, int) error
 	mu                sync.Mutex
 	provider          *sms.HTTPProvider
 	fingerprint       [32]byte
@@ -197,7 +196,7 @@ func (s *Service) Cleanup(ctx context.Context) error {
 		}
 	}
 	s.mu.Unlock()
-	if err := s.Store.Exec(ctx, "DELETE FROM guest_oidc_sessions WHERE expires_at<=?", now); err != nil {
+	if err := s.Store.Exec(ctx, "DELETE FROM guest_authorizations WHERE expires_at<=?", now); err != nil {
 		return err
 	}
 	if err := s.Store.Exec(ctx, "DELETE FROM guest_sessions WHERE expires_at<=?", now); err != nil {
@@ -210,6 +209,10 @@ func (s *Service) Request(ctx context.Context, token, rawPhone string) (Challeng
 }
 func (s *Service) RequestContact(ctx context.Context, token, channel, contact string) (Challenge, error) {
 	r, err := s.redirect(ctx, token)
+	if err != nil {
+		return Challenge{}, err
+	}
+	bound, err := s.Store.GuestAccessPolicy(ctx, r.NAS, r.MAC, r.Domain, channel)
 	if err != nil {
 		return Challenge{}, err
 	}
@@ -260,6 +263,14 @@ func (s *Service) RequestContact(ctx context.Context, token, channel, contact st
 	if channel == "email" {
 		phoneHash = s.digest("email", strings.ToLower(phone))
 	}
+	identity := "guest-" + channel + ":" + phoneHash
+	if err = s.Store.EvaluateGuestAccess(ctx, bound, r.NAS, r.MAC, identity); err != nil {
+		return Challenge{}, err
+	}
+	expires := now + 300
+	if bound.Access.ValidUntil > 0 {
+		expires = min(expires, bound.Access.ValidUntil)
+	}
 	id := randomID()
 	number, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -271,6 +282,9 @@ func (s *Service) RequestContact(ctx context.Context, token, channel, contact st
 		return Challenge{}, err
 	}
 	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "UPDATE guest_policy SET enabled=enabled WHERE id=1"); err != nil {
+		return Challenge{}, err
+	}
 	q := "SELECT enabled FROM guest_policy WHERE id=1"
 	if s.Store.Driver == "pgx" {
 		q += " FOR UPDATE"
@@ -322,13 +336,13 @@ func (s *Service) RequestContact(ctx context.Context, token, channel, contact st
 	if _, err = tx.ExecContext(ctx, s.Store.SQL("UPDATE guest_challenges SET code_digest='',expires_at=? WHERE nas=? AND mac=? AND verified_at=0"), now, r.NAS, r.MAC); err != nil {
 		return Challenge{}, err
 	}
-	if _, err = tx.ExecContext(ctx, s.Store.SQL("INSERT INTO guest_challenges(id,nas,mac,session_id,phone_hash,phone_cipher,code_digest,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?)"), id, r.NAS, r.MAC, r.SessionID, phoneHash, s.Vault.Seal([]byte(phone), "guest:"+id), s.digest(id, code), now, now+300); err != nil {
+	if _, err = tx.ExecContext(ctx, s.Store.SQL("INSERT INTO guest_challenges(id,nas,mac,session_id,phone_hash,phone_cipher,code_digest,created_at,expires_at,channel,domain_id,policy_id,policy_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"), id, r.NAS, r.MAC, r.SessionID, phoneHash, s.Vault.Seal([]byte(phone), "guest:"+id), s.digest(id, code), now, expires, channel, r.Domain, bound.Access.ID, store.GuestPolicyHash(bound)); err != nil {
 		return Challenge{}, err
 	}
 	if err = tx.Commit(); err != nil {
 		return Challenge{}, err
 	}
-	if err = send(ctx, phone, "Border Wi-Fi code: "+code+". Valid for 5 minutes. Do not share."); err != nil {
+	if err = send(ctx, phone, "Border Wi-Fi code: "+code+". Valid until "+time.Unix(expires, 0).UTC().Format("15:04:05 UTC")+". Do not share."); err != nil {
 		_ = s.Store.Exec(ctx, "UPDATE guest_challenges SET code_digest='',attempts=5,expires_at=? WHERE id=?", now, id)
 		_ = s.Store.Audit(ctx, "guest", maskContact(phone)+"/"+r.MAC, "failed", channel+" delivery failed")
 		return Challenge{}, fmt.Errorf("сообщение не отправлено; код аннулирован")
@@ -336,7 +350,7 @@ func (s *Service) RequestContact(ctx context.Context, token, channel, contact st
 	if err = s.Store.Audit(ctx, "guest", maskContact(phone)+"/"+r.MAC, "sent", channel+" guest code issued"); err != nil {
 		return Challenge{}, fmt.Errorf("сообщение отправлено, но аудит недоступен")
 	}
-	return Challenge{ID: id, Expires: now + 300, MaskedPhone: maskContact(phone), MaskedContact: maskContact(phone), Channel: channel}, nil
+	return Challenge{ID: id, Expires: expires, MaskedPhone: maskContact(phone), MaskedContact: maskContact(phone), Channel: channel}, nil
 }
 func (s *Service) Confirm(ctx context.Context, id, code string) (Grant, error) {
 	if len(id) != 64 || len(code) != 6 {
@@ -352,19 +366,20 @@ func (s *Service) Confirm(ctx context.Context, id, code string) (Grant, error) {
 		return Grant{}, err
 	}
 	defer tx.Rollback()
-	q := "SELECT c.nas,c.mac,c.session_id,c.phone_cipher,c.code_digest,c.expires_at,c.attempts,c.verified_at,p.vlan,p.session_seconds FROM guest_challenges c JOIN nas n ON n.address=c.nas JOIN guest_policy p ON p.id=1 WHERE c.id=? AND p.enabled=1 AND n.portal_enabled=1"
-	if s.Store.Driver == "pgx" {
-		q += " FOR UPDATE OF c"
+	// Serialize failed-attempt increments and successful consumption on SQLite and PostgreSQL.
+	if _, err = tx.ExecContext(ctx, "UPDATE guest_policy SET enabled=enabled WHERE id=1"); err != nil {
+		return Grant{}, err
 	}
-	var nas, mac, sessionID, phoneCipher, digest string
+	var g store.GuestAuthorization
+	var phoneCipher, digest, phoneHash string
 	var expires, verified int64
-	var attempts, ttl int
-	var vlan sql.NullInt64
-	if err = tx.QueryRowContext(ctx, s.Store.SQL(q), id).Scan(&nas, &mac, &sessionID, &phoneCipher, &digest, &expires, &attempts, &verified, &vlan, &ttl); err != nil {
+	var attempts int
+	q := "SELECT c.nas,c.mac,c.phone_cipher,c.phone_hash,c.code_digest,c.expires_at,c.attempts,c.verified_at,c.channel,c.domain_id,c.policy_id,c.policy_hash FROM guest_challenges c JOIN nas n ON n.address=c.nas JOIN guest_policy p ON p.id=1 WHERE c.id=? AND p.enabled=1 AND n.portal_enabled=1"
+	if err = tx.QueryRowContext(ctx, s.Store.SQL(q), id).Scan(&g.NAS, &g.MAC, &phoneCipher, &phoneHash, &digest, &expires, &attempts, &verified, &g.Method, &g.DomainID, &g.PolicyID, &g.PolicyHash); err != nil {
 		return Grant{}, fmt.Errorf("запрос не найден или доступ выключен")
 	}
 	now := time.Now().Unix()
-	if expires <= now || attempts >= 5 || verified != 0 || !vlan.Valid {
+	if expires <= now || attempts >= 5 || verified != 0 || g.PolicyHash == "" || (g.Method != "sms" && g.Method != "email") {
 		return Grant{}, fmt.Errorf("код истёк, использован или заблокирован")
 	}
 	if _, err = tx.ExecContext(ctx, s.Store.SQL("UPDATE guest_challenges SET attempts=attempts+1 WHERE id=?"), id); err != nil {
@@ -376,37 +391,20 @@ func (s *Service) Confirm(ctx context.Context, id, code string) (Grant, error) {
 		}
 		return Grant{}, fmt.Errorf("неверный код")
 	}
-	var active int
-	err = tx.QueryRowContext(ctx, s.Store.SQL("SELECT active FROM mac_auth WHERE mac=?"), mac).Scan(&active)
-	if err != nil && err != sql.ErrNoRows {
-		return Grant{}, err
-	}
-	if err == nil {
-		return Grant{}, fmt.Errorf("доступ устройства управляется администратором")
-	}
 	plain, err := s.Vault.Open(phoneCipher, "guest:"+id)
 	if err != nil {
 		return Grant{}, fmt.Errorf("данные запроса недоступны")
 	}
-	masked := maskContact(string(plain))
+	g.MaskedContact = maskContact(string(plain))
 	clear(plain)
-	grant := Grant{Expires: now + int64(ttl), VLAN: int(vlan.Int64), ReconnectRequired: true}
-	if _, err = tx.ExecContext(ctx, s.Store.SQL("INSERT INTO guest_sessions(nas,mac,masked_phone,vlan,expires_at) VALUES (?,?,?,?,?) ON CONFLICT(nas,mac) DO UPDATE SET masked_phone=excluded.masked_phone,vlan=excluded.vlan,expires_at=excluded.expires_at"), nas, mac, masked, grant.VLAN, grant.Expires); err != nil {
-		return Grant{}, err
-	}
 	if _, err = tx.ExecContext(ctx, s.Store.SQL("UPDATE guest_challenges SET code_digest='',verified_at=? WHERE id=?"), now, id); err != nil {
 		return Grant{}, err
 	}
 	if err = tx.Commit(); err != nil {
 		return Grant{}, err
 	}
-	if err = s.Store.Audit(ctx, "guest", masked+"/"+mac, "accepted", "guest code verified for NAS "+nas); err != nil {
-		return Grant{}, fmt.Errorf("доступ выдан, но аудит недоступен")
-	}
-	if s.Reconnect != nil && sessionID != "" {
-		grant.ReconnectRequired = s.Reconnect(ctx, nas, sessionID, mac, grant.VLAN) != nil
-	}
-	return grant, nil
+	g.Identity = "guest-" + g.Method + ":" + phoneHash
+	return s.authorizeGuest(ctx, g)
 }
 
 func maskContact(value string) string {

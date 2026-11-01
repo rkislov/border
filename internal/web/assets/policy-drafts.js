@@ -42,7 +42,7 @@ function editPolicyDraft(d){
 function renderDraftDiff(h,d){
  const details=document.createElement('details');details.open=true;draftText(details,'summary',policyKindNames[d.Kind]+' · '+d.PolicyID+' · редакция '+d.Revision);
  if(d.Payload===null){draftText(details,'p','Удаление объекта при публикации. Сохранённая версия останется в истории для отката.');draftText(details,'pre',JSON.stringify(d.Base,null,2));h.append(details);return;}
- const labels={Name:'Название',Enabled:'Включено',Source:'Источник',DomainID:'Домен',Steps:'Проверки',AuthenticationID:'Авторизация',Mode:'Назначение',SegmentID:'Сегмент',LocationID:'Расположение',VLAN:'VLAN',AccessPolicyID:'Политика доступа',SessionSeconds:'Срок сессии, сек.',Subjects:'Личности',Members:'Участники',Rules:'Правила',Bindings:'Привязки'};
+ const labels={Name:'Название',Enabled:'Включено',Source:'Источник',DomainID:'Домен',Steps:'Проверки',GuestMethods:'Гостевые способы входа',AuthenticationID:'Авторизация',Mode:'Назначение',SegmentID:'Сегмент',LocationID:'Расположение',VLAN:'VLAN',AccessPolicyID:'Политика доступа',SessionSeconds:'Срок сессии, сек.',Subjects:'Личности',Members:'Участники',Rules:'Правила',Bindings:'Привязки'};
  for(const key of Object.keys(d.Payload)){if(['ID','PolicyID','Version','NAS'].includes(key))continue;const before=d.Base?.[key],after=d.Payload[key];if(JSON.stringify(before)!==JSON.stringify(after))draftText(details,'p',(labels[key]||key)+': '+(before===undefined?'—':JSON.stringify(before))+' → '+JSON.stringify(after));}h.append(details);
 }
 async function showPolicyBatch(ds,selectedReview=null){

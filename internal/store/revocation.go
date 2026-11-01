@@ -64,7 +64,7 @@ func (s *Store) RevokeIdentity(ctx context.Context, user string) error {
 	return tx.Commit()
 }
 func (s *Store) RefreshRevocations(ctx context.Context) error {
-	if err := s.RefreshOIDCRevocations(ctx); err != nil {
+	if err := s.RefreshGuestRevocations(ctx); err != nil {
 		return err
 	}
 	now := time.Now().Unix()

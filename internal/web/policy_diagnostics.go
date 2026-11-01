@@ -65,7 +65,7 @@ func (a *app) policyDiagnostic(w http.ResponseWriter, r *http.Request) {
 				result["Status"] = "mode_mismatch"
 			}
 			profile.Mode = p.Access.Mode
-			if profile.Validate() != nil || (p.Access.Mode != "network" && (p.Authentication.Source == "mab" || p.Authentication.Source == "eap_tls")) {
+			if profile.Validate() != nil || (p.Access.Mode != "network" && (p.Authentication.Source == "mab" || p.Authentication.Source == "eap_tls" || p.Authentication.Source == "oidc" || p.Authentication.Source == "guest")) {
 				result["Status"] = "profile_incompatible"
 			}
 		}

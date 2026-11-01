@@ -171,6 +171,9 @@ func (s *Service) Design(ctx context.Context, token string) (PublicDesign, error
 		}
 		for _, channel := range channels {
 			if method == channel {
+				if _, e := s.Store.GuestAccessPolicy(ctx, r.NAS, r.MAC, r.Domain, method); e != nil {
+					continue
+				}
 				out.Methods = append(out.Methods, method)
 				break
 			}

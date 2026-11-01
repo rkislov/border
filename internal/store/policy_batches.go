@@ -450,6 +450,9 @@ func (s *Store) publishPolicyBatchTx(ctx context.Context, tx *sql.Tx, refs []Dra
 			return e
 		}
 	}
+	if e = s.retirePublishedGuests(ctx, tx, t); e != nil {
+		return e
+	}
 	if reviewID != "" {
 		if _, e = tx.ExecContext(ctx, s.SQL("UPDATE policy_reviews SET state='published',batch_id=?,updated_at=? WHERE id=?"), batch, time.Now().Unix(), reviewID); e != nil {
 			return e

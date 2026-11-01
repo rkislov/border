@@ -9,7 +9,6 @@ import (
 
 	"github.com/rkislov/border/internal/identity"
 	"github.com/rkislov/border/internal/store"
-	"time"
 )
 
 func NormalizeMAC(raw string) (string, error) { return identity.MAC(raw) }
@@ -37,17 +36,7 @@ func DecideForNAS(ctx context.Context, s *store.Store, nas, mac string) (Decisio
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Decision{}, err
 	}
-	if nas != "" {
-		vlan, expires, err := s.GuestAccess(ctx, nas, mac)
-		if err == nil {
-			remaining := expires - time.Now().Unix()
-			if remaining > 0 {
-				return Decision{Accept: true, VLAN: vlan, Reason: "guest SMS grant", Timeout: uint32(remaining)}, nil
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return Decision{}, err
-		}
-	}
+
 	vlan, err := s.Isolation(ctx)
 	if err != nil {
 		return Decision{}, err

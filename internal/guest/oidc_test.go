@@ -144,7 +144,7 @@ func TestOIDCCodeFlowPolicyAndReplay(t *testing.T) {
 	if grant.VLAN != 100 || grant.Expires > time.Now().Unix()+301 || !grant.ReconnectRequired {
 		t.Fatal(grant)
 	}
-	g, e := s.Store.GuestOIDCSession(t.Context(), "192.0.2.1", "00:11:22:33:44:55")
+	g, e := s.Store.GuestAuthorization(t.Context(), "192.0.2.1", "00:11:22:33:44:55")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -158,14 +158,14 @@ func TestOIDCCodeFlowPolicyAndReplay(t *testing.T) {
 		t.Fatal("extra token exchange")
 	}
 	b, _, _ := s.Store.GuestOIDCPolicy(t.Context(), g.NAS, g.MAC, "", "oidc")
-	access, e := s.Store.NewGuestOIDCGrant(t.Context(), g, b, g.Expires)
+	access, e := s.Store.NewGuestGrant(t.Context(), g, b, g.Expires)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if e = s.Store.Exec(t.Context(), "UPDATE access_policies SET enabled=0 WHERE id='guest'"); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Store.GuestOIDCSession(t.Context(), g.NAS, g.MAC); e == nil {
+	if _, e = s.Store.GuestAuthorization(t.Context(), g.NAS, g.MAC); e == nil {
 		t.Fatal("disabled policy accepted")
 	}
 	if e = s.Store.RefreshRevocations(t.Context()); e != nil {
@@ -198,7 +198,7 @@ func TestOIDCRejectsInvalidIdentityTokens(t *testing.T) {
 				t.Fatal("invalid token accepted")
 			}
 			var n int
-			_ = s.Store.Row(t.Context(), "SELECT count(*) FROM guest_oidc_sessions").Scan(&n)
+			_ = s.Store.Row(t.Context(), "SELECT count(*) FROM guest_authorizations").Scan(&n)
 			if n != 0 {
 				t.Fatal("grant after rejected token")
 			}
@@ -206,7 +206,7 @@ func TestOIDCRejectsInvalidIdentityTokens(t *testing.T) {
 	}
 }
 func TestOIDCFlowInvalidatedAndScopes(t *testing.T) {
-	for _, change := range []string{"provider", "policy", "binding", "domain", "design", "blocked", "expired-flow", "restart", "registered-device", "deny-rule"} {
+	for _, change := range []string{"provider", "policy", "binding", "domain", "design", "blocked", "expired-flow", "restart", "registered-device", "deny-rule", "global-toggle"} {
 		t.Run(change, func(t *testing.T) {
 			s, idp, token := oidcFixture(t)
 			if change == "domain" {
@@ -218,6 +218,11 @@ func TestOIDCFlowInvalidatedAndScopes(t *testing.T) {
 			start, state := startOIDCTest(t, s, idp, token)
 			var e error
 			switch change {
+			case "global-toggle":
+				e = s.Store.SetGuestPolicy(t.Context(), store.GuestPolicy{MaxPerHour: 1000})
+				if e == nil {
+					e = s.Store.SetGuestPolicy(t.Context(), store.GuestPolicy{Enabled: true, MaxPerHour: 1000})
+				}
 			case "provider":
 				list, _ := s.Store.OIDCProviders(t.Context(), "tenant")
 				c := OIDCConfiguration{OIDCProvider: list[0]}

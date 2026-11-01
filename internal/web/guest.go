@@ -72,11 +72,11 @@ func (a *app) guestRoutes(mux *http.ServeMux) {
 		if !ready(w) {
 			return
 		}
-		var v struct{ NAS, MAC string }
+		var v struct{ ID, NAS, MAC string }
 		if !decode(w, r, &v) {
 			return
 		}
-		a.finish(w, r, a.s.RevokeGuest(r.Context(), v.NAS, v.MAC), "revoke guest grant")
+		a.finish(w, r, a.s.RevokeGuest(r.Context(), v.NAS, v.MAC, v.ID), "revoke guest grant")
 	})
 	mux.HandleFunc("POST /api/guest/link", func(w http.ResponseWriter, r *http.Request) {
 		if !ready(w) {

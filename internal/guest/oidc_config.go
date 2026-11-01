@@ -49,9 +49,13 @@ func (s *Service) SaveOIDCProvider(ctx context.Context, c OIDCConfiguration) err
 		}
 		c.EmailDomains[i] = d
 	}
-	var source, mode string
-	if err := s.Store.Row(ctx, "SELECT a.source,p.mode FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", c.AccessPolicyID).Scan(&source, &mode); err != nil || source != "oidc" || mode != "network" {
+	var source, mode, methods string
+	if err := s.Store.Row(ctx, "SELECT a.source,p.mode,a.guest_methods FROM access_policies p JOIN authentication_policies a ON a.id=p.authentication_id WHERE p.id=?", c.AccessPolicyID).Scan(&source, &mode, &methods); err != nil || (source != "oidc" && source != "guest") || mode != "network" {
 		return fmt.Errorf("select a published network access policy with OIDC authentication")
+	}
+	a := store.AuthenticationPolicy{Source: source}
+	if err := json.Unmarshal([]byte(methods), &a.GuestMethods); err != nil || !a.AllowsGuestMethod("oidc") {
+		return fmt.Errorf("OIDC must be enabled in the guest authentication policy")
 	}
 	tx, err := s.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -94,7 +98,7 @@ func (s *Service) SaveOIDCProvider(ctx context.Context, c OIDCConfiguration) err
 		return err
 	}
 	// Scope overrides and credential changes retire previous grants immediately.
-	predicate := "provider_id=?"
+	predicate := "method='oidc' AND provider_id=?"
 	args := []any{c.ID}
 	if strings.HasPrefix(c.Scope, "nas:") {
 		predicate += " AND nas=?"
@@ -104,10 +108,10 @@ func (s *Service) SaveOIDCProvider(ctx context.Context, c OIDCConfiguration) err
 		predicate += " AND domain_id=?"
 		args = append(args, strings.TrimPrefix(c.Scope, "domain:"))
 	}
-	if _, err = tx.ExecContext(ctx, s.Store.SQL("UPDATE access_grants SET reason='OIDC provider changed',next_attempt=0 WHERE reason='' AND guest_oidc_id IN (SELECT id FROM guest_oidc_sessions WHERE "+predicate+")"), args...); err != nil {
+	if _, err = tx.ExecContext(ctx, s.Store.SQL("UPDATE access_grants SET reason='OIDC provider changed',next_attempt=0 WHERE reason='' AND guest_authorization_id IN (SELECT id FROM guest_authorizations WHERE "+predicate+")"), args...); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, s.Store.SQL("DELETE FROM guest_oidc_sessions WHERE "+predicate), args...); err != nil {
+	if _, err = tx.ExecContext(ctx, s.Store.SQL("DELETE FROM guest_authorizations WHERE "+predicate), args...); err != nil {
 		return err
 	}
 	return tx.Commit()
