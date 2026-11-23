@@ -99,8 +99,10 @@ Session-ID совпал в UAM, Access-Request и Accounting; Class связал
 внешние почтовые сервисы этим не проверялись. Тестовый SSID и Chilli отключены,
 временный WireGuard, маршруты, DNS и серверные правила удалены.
 
-Публичный TLS и автоматическое окно captive portal, реальная доставка SMS/SMTP,
-внешние IdP и другие модели Keenetic требуют отдельных испытаний. Для
+Публичный HTTPS через FESS, вход в браузере и системном Captive Network
+Assistant macOS проверены отдельно: [результат и настройка](PUBLIC-GUEST-PORTAL.md).
+Внешняя доставка SMS/SMTP, внешние IdP и другие модели Keenetic требуют
+отдельных испытаний. Для
 WPA-Enterprise результаты captive Accounting/Disconnect неприменимы.
 Подробнее: [физический стенд](NETCRAZE-LAB.md),
 [общая очередь и отзыв](GUEST-ACTIVATION.md),
