@@ -142,6 +142,9 @@ func TestTransferToPostgres(t *testing.T) {
 	for _, q := range []string{
 		"INSERT INTO nas(address,name,secret,portal_enabled,dictionary,access_mode) VALUES ('192.0.2.1','test','test-secret-123456789',1,'cisco','ssh')",
 		"INSERT INTO nas_grants(nas,username,mode,privilege) VALUES('192.0.2.1','user','ssh',3)",
+		"INSERT INTO nas(address,name,secret,dictionary) VALUES('192.0.2.2','Netcraze','test-secret-123456789','keenetic')",
+		"INSERT INTO nas_netcraze(nas,enabled,config) VALUES('192.0.2.2',1,'sealed-netcraze-settings')",
+		"INSERT INTO guest_authorizations(id,nas,mac,identity,method,provider_scope,provider_id,provider_revision,policy_id,policy_hash,expires_at,nas_session_id) VALUES('nc-guest','192.0.2.2','00:11:22:33:44:66','guest-email:test','email','','','','test','hash',9999999999,'nc-session')",
 		"UPDATE guest_policy SET vlan=123,enabled=1",
 		"INSERT INTO guest_sessions(nas,mac,masked_phone,vlan,expires_at) VALUES('192.0.2.1','00:11:22:33:44:55','+7*******4567',123,9999999999)",
 		"INSERT INTO device_fingerprints(mac,source,first_seen,last_seen) VALUES('00:11:22:33:44:55','admin',1,2)",
@@ -211,6 +214,12 @@ func TestTransferToPostgres(t *testing.T) {
 		t.Fatal("device not transferred")
 	}
 	var encrypted string
+	if err = dst.Row(ctx, "SELECT config FROM nas_netcraze WHERE nas='192.0.2.2'").Scan(&encrypted); err != nil || encrypted != "sealed-netcraze-settings" {
+		t.Fatal("encrypted NAS settings not transferred", err)
+	}
+	if err = dst.Row(ctx, "SELECT nas_session_id FROM guest_authorizations WHERE id='nc-guest'").Scan(&encrypted); err != nil || encrypted != "nc-session" {
+		t.Fatal("guest NAS session binding not transferred", err)
+	}
 	if err = dst.Row(ctx, "SELECT private_key FROM certificate_authorities WHERE id='ca'").Scan(&encrypted); err != nil || encrypted != "encrypted-test-key" {
 		t.Fatal("encrypted CA not transferred", err)
 	}

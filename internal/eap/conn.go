@@ -22,6 +22,7 @@ type tlsResult struct {
 	state         tls.ConnectionState
 	key           []byte
 	err           error
+	failureReason string
 }
 type flightConn struct {
 	ctx      context.Context

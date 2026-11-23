@@ -81,7 +81,10 @@ OIDC проходит тестовый TLS IdP и тот же общий мех�
 провайдеры остаются отложенными. Автотесты проверяют подмену SSH-ключа,
 несвязанный Accounting, повторные рабочие процессы, перезапуск, предел
 попыток, отзыв, смену поколения, поддельные квитанции и границы тенанта.
-Физические Netcraze/Keenetic и другие captive NAS ещё требуют адаптеров и испытаний.
+Добавлен [встроенный адаптер Netcraze/Chilli](NETCRAZE-ADAPTER.md) с настройками
+для каждого NAS. Сквозной прогон основного бинарника на Ultra NC-1812 подтвердил
+email-вход, Accounting, сохранение сессии после перезапуска, срок доступа
+и досрочный отзыв с Disconnect-ACK: [NETCRAZE-LAB.md](NETCRAZE-LAB.md).
 
 Документация производителя:
 [HotSpot active login](https://manual.mikrotik.com/docs/cli-reference/ip/hotspot/active/login/),

@@ -220,6 +220,9 @@ func TestRejectsMissingAndUntrustedCertificates(t *testing.T) {
 			if reply.Accept || !reply.Reject {
 				t.Fatal("unauthorized client accepted")
 			}
+			if mode != "revoked" && reply.Reason != "TLS handshake failed" {
+				t.Fatalf("certificate rejection misclassified: %s", reply.Reason)
+			}
 		})
 	}
 }

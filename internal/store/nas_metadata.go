@@ -17,6 +17,15 @@ func (s *Store) SaveNASMetadata(ctx context.Context, n NAS, secret string) error
 		return e
 	}
 	defer tx.Rollback()
+	if n.Dictionary != "keenetic" {
+		var enabled int
+		if e = tx.QueryRowContext(ctx, s.SQL("SELECT COUNT(*) FROM nas_netcraze WHERE nas=? AND enabled=1"), n.Address).Scan(&enabled); e != nil {
+			return e
+		}
+		if enabled != 0 {
+			return fmt.Errorf("disable the Netcraze adapter before changing the NAS profile")
+		}
+	}
 	var current string
 	if e = tx.QueryRowContext(ctx, s.SQL("SELECT COALESCE(access_policy_id,'') FROM nas WHERE address=?"), n.Address).Scan(&current); e != nil && e != sql.ErrNoRows {
 		return e

@@ -55,7 +55,22 @@ func Describe(dictionary string) (Capabilities, bool) {
 	add("disconnect", "Отзыв доступа", true, "RFC 5176, общий секрет, доступ к CoA-порту. Связь с разрешением обязательна для автоматического отзыва; ACK не гарантирован словарём.")
 	add("coa_vlan", "Смена VLAN через CoA", true, "NAS должен поддерживать CoA и tunnel-атрибуты для данного вида сессии; требуется проверка на модели.")
 	add("radsec", "RadSec", false, "Не реализовано; RADIUS UDP размещать в защищённой сети.")
-	add("guest_activation", "Автоматическое открытие гостевого доступа", dictionary == "mikrotik", "Адаптер RouterOS HotSpot через SSH с проверкой ключа. HotSpot на VLAN-интерфейсе политики, RADIUS и Accounting/Class обязательны. Общая очередь SMS/email/OIDC; другие captive NAS требуют отдельного адаптера.")
+	add("guest_activation", "Автоматическое открытие гостевого доступа", dictionary == "mikrotik" || dictionary == "keenetic", "Адаптеры RouterOS HotSpot и Netcraze/Chilli. Фиксированный гостевой сегмент, RADIUS и Accounting/Class обязательны. Общая очередь SMS/email/OIDC; настройки адаптера задаются отдельно для NAS.")
+	if dictionary == "keenetic" {
+		for i := range c.Features {
+			f := &c.Features[i]
+			switch f.ID {
+			case "guest_activation":
+				f.Requirements = "Chilli UAM и RCI; HTTPS с закреплённым сертификатом либо защищённый туннель. Подписанный UAM Session-ID должен совпасть с Acct-Session-Id в Access-Request. Гостевой мост и сегмент настраиваются заранее. Успех только по Class/Accounting."
+				f.Verification = "Встроенный адаптер: Ultra NC-1812, NDMS 5.1.8, 23.11.2026. Email, Accounting, перезапуск, срок и Disconnect-ACK проверены."
+			case "peap":
+				f.Requirements = "TLS 1.2; выбрать метод local/directory для сети. Проверять CA и имя сервера на клиенте. TTLS/PAP проверен с локальным пользователем; доменный вход на этом NAS ещё не проверен. Без resumption и PEAP cryptobinding."
+				f.Verification = "TTLS/PAP: Ultra NC-1812 и macOS, 23.11.2026. PEAP на этом NAS не проверен."
+			case "accounting", "disconnect":
+				f.Verification = "Chilli: Ultra NC-1812, 23.11.2026. Для WPA-Enterprise не подтверждено."
+			}
+		}
+	}
 	if dictionary == "mikrotik" || dictionary == "strongswan" {
 		for i := range c.Features {
 			f := &c.Features[i]

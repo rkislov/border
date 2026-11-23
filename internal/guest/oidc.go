@@ -182,5 +182,5 @@ func (s *Service) FinishOIDC(ctx context.Context, state, browser, code, provider
 		return Grant{}, denied
 	}
 	user := OIDCIdentity(verified.Issuer, verified.Subject)
-	return s.authorizeGuest(ctx, store.GuestAuthorization{NAS: f.redirect.NAS, MAC: f.redirect.MAC, DomainID: f.redirect.Domain, Method: "oidc", Identity: user, ProviderScope: c.Scope, ProviderID: c.ID, ProviderRevision: c.Revision, PolicyID: b.Access.ID, PolicyHash: f.policyHash, Expires: verified.Expiry.Unix()})
+	return s.authorizeGuest(ctx, store.GuestAuthorization{NASSessionID: f.redirect.SessionID, NAS: f.redirect.NAS, MAC: f.redirect.MAC, DomainID: f.redirect.Domain, Method: "oidc", Identity: user, ProviderScope: c.Scope, ProviderID: c.ID, ProviderRevision: c.Revision, PolicyID: b.Access.ID, PolicyHash: f.policyHash, Expires: verified.Expiry.Unix()})
 }

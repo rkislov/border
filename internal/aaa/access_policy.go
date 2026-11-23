@@ -9,6 +9,7 @@ import (
 	"github.com/rkislov/border/internal/store"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
+	"layeh.com/radius/rfc2866"
 	"layeh.com/radius/rfc2868"
 	"reflect"
 	"strconv"
@@ -55,6 +56,7 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 	var guestSession store.GuestAuthorization
 	if valid {
 		if a.Source == "oidc" || a.Source == "guest" {
+			reason = "guest portal authorization"
 			mac, e := NormalizeMAC(rfc2865.UserName_GetString(p))
 			calling := rfc2865.CallingStationID_GetString(p)
 			if calling != "" {
@@ -68,8 +70,18 @@ func processPolicy(ctx context.Context, s *store.Store, p *radius.Packet, host s
 				guestSession, e = s.GuestAuthorization(ctx, host, mac)
 				valid = e == nil && guestSession.PolicyHash == store.GuestPolicyHash(b)
 				user = guestSession.Identity
+				var bound int
+				check := s.Row(ctx, "SELECT enabled FROM nas_netcraze WHERE nas=?", host).Scan(&bound)
+				if check != nil && check != sql.ErrNoRows {
+					valid = false
+				}
+				if bound == 1 {
+					if guestSession.NASSessionID == "" || guestSession.NASSessionID != rfc2866.AcctSessionID_GetString(p) {
+						valid = false
+						reason = "guest NAS session mismatch"
+					}
+				}
 			}
-			reason = "guest portal authorization"
 		} else if ms != nil {
 			user, msSuccess, valid, reason = authenticateMSCHAP(ctx, s, p, b, o, ms)
 			if valid && b.Authentication.Source == "directory" {

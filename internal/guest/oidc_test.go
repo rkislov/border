@@ -129,6 +129,10 @@ func startOIDCTest(t *testing.T, s *Service, idp *testOIDC, token string) (OIDCS
 }
 func TestOIDCCodeFlowPolicyAndReplay(t *testing.T) {
 	s, idp, token := oidcFixture(t)
+	token, err := SignRedirect(Redirect{NAS: "192.0.2.1", MAC: "00:11:22:33:44:55", SessionID: "captive-session"}, "long-test-secret-123")
+	if err != nil {
+		t.Fatal(err)
+	}
 	design, e := s.Design(t.Context(), token)
 	if e != nil || len(design.OIDC) != 1 {
 		t.Fatalf("design %+v %v", design, e)
@@ -147,6 +151,9 @@ func TestOIDCCodeFlowPolicyAndReplay(t *testing.T) {
 	g, e := s.Store.GuestAuthorization(t.Context(), "192.0.2.1", "00:11:22:33:44:55")
 	if e != nil {
 		t.Fatal(e)
+	}
+	if g.NASSessionID != "captive-session" {
+		t.Fatal("lost OIDC NAS session binding")
 	}
 	if g.Identity != OIDCIdentity(idp.server.URL, "user-123") || strings.Contains(g.Identity, "guest@example.org") {
 		t.Fatal(g)

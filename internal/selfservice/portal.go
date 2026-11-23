@@ -84,6 +84,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func (p *Portal) Handler() http.Handler {
 	mux := http.NewServeMux()
 	p.guestRoutes(mux)
+	p.netcrazeRoutes(mux)
 	p.pushRoutes(mux)
 	files, _ := fs.Sub(assets, "assets")
 	mux.Handle("GET /", http.FileServer(http.FS(files)))

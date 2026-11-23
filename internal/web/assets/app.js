@@ -22,9 +22,10 @@ async function load() {
  try { const r = await scopedFetch('/api/state'); if (!r.ok) throw new Error('Не удалось загрузить данные: ' + r.status); state = await r.json();
   diagnosticRequest++;const diagnosticNAS=$('#diagnostic-nas'),previousNAS=diagnosticNAS.value;diagnosticNAS.replaceChildren(new Option('Выберите NAS',''));for(const n of state.nas)diagnosticNAS.add(new Option(n.Name+' · '+n.Address,n.Address));if([...diagnosticNAS.options].some(o=>o.value===previousNAS))diagnosticNAS.value=previousNAS;$('#diagnostic-result').hidden=true;
   $('#stat-nas').textContent = state.nas.length; $('#stat-vlans').textContent = state.vlans.length; $('#stat-devices').textContent = state.devices.filter(d => d.Active).length; $('#stat-sessions').textContent = state.sessions.filter(s => s.Status === 'active').length;
+  populateNetcrazeNAS();
   const rosNAS=$('#routeros-nas'),previousROS=rosNAS.value;rosNAS.replaceChildren(new Option('Выберите MikroTik',''));for(const n of state.nas.filter(n=>n.Dictionary==='mikrotik'))rosNAS.add(new Option(n.Name+' · '+n.Address,n.Address));if([...rosNAS.options].some(o=>o.value===previousROS))rosNAS.value=previousROS;
   table('#nas-list', ['IP-адрес', 'Имя', 'Словарь', 'Режим', 'Расположение', 'Одиночная политика', 'CoA порт', 'Обновление, сек.', 'Потеря связи, сек.', 'SMS-портал'], state.nas.map(n => [n.Address, n.Name, n.Dictionary, n.Mode, n.LocationID, n.AccessPolicyID, n.CoAPort,n.InterimSeconds,n.StaleSeconds, n.PortalEnabled ? 'Разрешён' : 'Выключен']), 'nas');
-  for(const nas of state.nas){const b=document.createElement('button');b.textContent='Изменить '+nas.Address;b.onclick=()=>fillForm('#nas-form',{...nas,Secret:''});$('#nas-list').append(b);const check=document.createElement('button');check.textContent='Совместимость '+nas.Address;check.onclick=()=>checkCompatibility(nas.Address);$('#nas-list').append(check);}
+  for(const nas of state.nas){const b=document.createElement('button');b.textContent='Изменить '+nas.Address;b.onclick=()=>fillForm('#nas-form',{...nas,Secret:''});$('#nas-list').append(b);const check=document.createElement('button');check.textContent='Совместимость '+nas.Address;check.onclick=()=>checkCompatibility(nas.Address);$('#nas-list').append(check);if(nas.Dictionary==='keenetic'){const adapter=document.createElement('button');adapter.textContent='Гостевой адаптер '+nas.Address;adapter.onclick=()=>{$('#netcraze-nas').value=nas.Address;loadNetcraze();$('#netcraze-form').scrollIntoView({behavior:'smooth',block:'start'});};$('#nas-list').append(adapter);}}
   table('#vlans-list', ['VLAN', 'Название'], state.vlans.map(v => [v.ID, v.Name]), 'vlans');
   table('#devices-list', ['MAC', 'VLAN', 'Статус', 'Тип', 'Комментарий'], state.devices.map(d => [d.MAC, d.VLAN || 'NAS default', d.Active ? 'Активно' : 'Запрещено', d.Voice ? 'Voice' : 'Data', d.Comment]), 'devices');
   const heads = ['Время', 'Источник', 'Идентификатор', 'Результат', 'Причина']; const rows = state.events.map(e => [date(e.Time), e.Source, e.Identity, e.Result, e.Reason]); table('#recent', heads, rows.slice(0, 8));
@@ -273,3 +274,38 @@ async function checkCompatibility(nas){
 
 function showGuestMethods(){document.querySelector('#guest-methods-field').hidden=document.querySelector('#authentication-form').elements.Source.value!=='guest';}
 document.querySelector('#authentication-form').elements.Source.addEventListener('change',showGuestMethods);
+
+let netcrazeRequest=0;
+function populateNetcrazeNAS(){
+ const select=$('#netcraze-nas'),old=select.value;
+ select.replaceChildren(new Option('Выберите Netcraze / Keenetic',''));
+ for(const n of state.nas.filter(n=>n.Dictionary==='keenetic'))select.add(new Option(n.Name+' · '+n.Address,n.Address));
+ if([...select.options].some(o=>o.value===old))select.value=old;
+ if(old && !select.value)loadNetcraze();
+}
+async function loadNetcraze(){
+ const f=$('#netcraze-form'),nas=f.elements.NAS.value,request=++netcrazeRequest;
+ for(const k of ['Address','HTTPHost','Username','Password','CertificateSHA256','Bridge','Subnet','SegmentID','DomainID','NASIdentifier','RadiusServer','UAMSecret','VLAN'])f.elements[k].value='';
+ f.elements.Chilli.value='Chilli0';f.elements.AuthPort.value='1812';f.elements.AccountingPort.value='1813';f.elements.Enabled.checked=false;f.elements.TunnelHTTP.checked=false;
+ $('#netcraze-uam-url').value='';$('#netcraze-status').textContent='';
+ if(!nas)return;
+ try{
+  if(!draftChoiceModel)await loadAccessModel();if(request!==netcrazeRequest)return;
+  const r=await scopedFetch('/api/netcraze?nas='+encodeURIComponent(nas));if(!r.ok)throw new Error(await r.text());const c=await r.json();if(request!==netcrazeRequest)return;
+  for(const k of ['Address','HTTPHost','Username','CertificateSHA256','Chilli','Bridge','Subnet','SegmentID','DomainID','NASIdentifier','RadiusServer','VLAN','AuthPort','AccountingPort'])if(c[k])f.elements[k].value=c[k];
+  f.elements.Enabled.checked=!!c.Enabled;f.elements.TunnelHTTP.checked=!!c.TunnelHTTP;$('#netcraze-uam-url').value=c.UAMURL||'';
+  $('#netcraze-status').textContent=(c.HasPassword?'Пароль сохранён. ':'Пароль ещё не задан. ')+(c.HasUAMSecret?'Секрет UAM сохранён.':'Секрет UAM ещё не задан.');
+ }catch(e){if(request===netcrazeRequest)notice(e.message,true);}
+}
+$('#netcraze-nas').onchange=loadNetcraze;
+$('#netcraze-form').onsubmit=async e=>{
+ e.preventDefault();const f=e.target,data=Object.fromEntries(new FormData(f));
+ for(const k of ['VLAN','AuthPort','AccountingPort'])data[k]=Number(data[k]);
+ for(const k of ['Enabled','TunnelHTTP'])data[k]=f.elements[k].checked;
+ if(await mutate('/api/netcraze',data)){f.elements.Password.value='';f.elements.UAMSecret.value='';await loadNetcraze();}
+};
+$('#netcraze-check').onclick=async()=>{
+ const nas=$('#netcraze-nas').value;if(!nas)return;const request=++netcrazeRequest;$('#netcraze-status').textContent='Проверка подключения и конфигурации…';
+ try{const r=await scopedFetch('/api/netcraze/check',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({NAS:nas})});if(!r.ok)throw new Error(await r.text());if(request===netcrazeRequest)$('#netcraze-status').textContent='Параметры Chilli, RADIUS и UAM совпадают. Открытие доступа и Accounting проверяются при входе гостя.';}
+ catch(e){if(request===netcrazeRequest)$('#netcraze-status').textContent=e.message;}
+};

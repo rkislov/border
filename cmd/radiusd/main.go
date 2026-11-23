@@ -29,6 +29,7 @@ import (
 	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/identitysource"
 	"github.com/rkislov/border/internal/mail"
+	"github.com/rkislov/border/internal/nascontrol"
 	"github.com/rkislov/border/internal/notification"
 	"github.com/rkislov/border/internal/pki"
 	"github.com/rkislov/border/internal/routeros"
@@ -367,7 +368,7 @@ func command() *cobra.Command {
 		stopNotifications := notifier.StartPolicyDeliveries(ctx)
 		defer stopNotifications()
 		if guests != nil {
-			guests.Activate = management.ActivateGuest
+			nascontrol.ConfigureGuest(guests)
 			stopActivations := guests.StartActivations(ctx)
 			defer stopActivations()
 			stopCleanup := guests.StartCleanup(ctx)

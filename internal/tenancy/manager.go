@@ -16,6 +16,7 @@ import (
 	"github.com/rkislov/border/internal/eapmschap"
 	"github.com/rkislov/border/internal/guest"
 	"github.com/rkislov/border/internal/identitysource"
+	"github.com/rkislov/border/internal/nascontrol"
 	"github.com/rkislov/border/internal/notification"
 	"github.com/rkislov/border/internal/pki"
 	"github.com/rkislov/border/internal/routeros"
@@ -168,7 +169,7 @@ func (m *Manager) open(ctx context.Context, id string) (*Runtime, error) {
 	if err != nil {
 		return fail(err)
 	}
-	guests.Activate = (&routeros.Service{Store: s, Vault: codes.Vault}).ActivateGuest
+	nascontrol.ConfigureGuest(guests)
 	r.guest = guests
 	notifications := &notification.Service{Store: s, Vault: codes.Vault, Tenant: id}
 	codes.Mail = notifications

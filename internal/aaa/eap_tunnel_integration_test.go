@@ -158,6 +158,10 @@ func runTunneledEAPOL(t *testing.T, domain *identitysource.Domain, username, pas
 			}
 			cases = append(cases, attempt{"expired", password, "radius.example.test", false})
 			for _, tc := range cases {
+				var innerRejectsBefore int
+				if err := s.Row(ctx, "SELECT COUNT(*) FROM auth_log WHERE result='Access-Reject' AND reason='inner authentication rejected'").Scan(&innerRejectsBefore); err != nil {
+					t.Fatal(err)
+				}
 				var before int
 				if err := s.Row(ctx, "SELECT COUNT(*) FROM access_grants").Scan(&before); err != nil {
 					t.Fatal(err)
@@ -213,6 +217,15 @@ func runTunneledEAPOL(t *testing.T, domain *identitysource.Domain, username, pas
 				}
 				if !tc.success && !strings.Contains(string(out), "EAP authentication failed") && tc.name != "wrong-server" {
 					t.Fatalf("%s: no explicit EAP rejection", tc.name)
+				}
+				if tc.name == "wrong-password" || tc.name == "blocked" || tc.name == "blocked-ldap-down" || tc.name == "ldap-down" {
+					var innerRejectsAfter int
+					if err := s.Row(ctx, "SELECT COUNT(*) FROM auth_log WHERE result='Access-Reject' AND reason='inner authentication rejected'").Scan(&innerRejectsAfter); err != nil {
+						t.Fatal(err)
+					}
+					if innerRejectsAfter <= innerRejectsBefore {
+						t.Fatalf("%s: missing inner-authentication rejection diagnostic", tc.name)
+					}
 				}
 				var after int
 				if err := s.Row(ctx, "SELECT COUNT(*) FROM access_grants").Scan(&after); err != nil {

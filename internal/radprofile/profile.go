@@ -24,7 +24,7 @@ type Profile struct {
 
 var Standard = []Attribute{{"Service-Type", 0, 6, "integer"}, {"Filter-Id", 0, 11, "string"}, {"Session-Timeout", 0, 27, "integer"}, {"Tunnel-Type", 0, 64, "integer"}, {"Tunnel-Medium-Type", 0, 65, "integer"}, {"Tunnel-Private-Group-ID", 0, 81, "string"}}
 var Catalog = []Profile{
-	{"keenetic", "Keenetic / KeeneticOS", "WPA Enterprise через стандартные RADIUS-атрибуты. SSH/VPN не подтверждены и отключены. Captive Portal UAM требует отдельного адаптера.", Standard},
+	{"keenetic", "Netcraze / Keenetic", "WPA Enterprise через стандартные RADIUS-атрибуты. SSH/VPN не подтверждены и отключены. Для Chilli UAM настройте встроенный гостевой адаптер.", Standard},
 	{"standard", "IETF / стандартный RADIUS", "Стандартные атрибуты RFC.", Standard},
 	{"mikrotik", "MikroTik RouterOS", "Группа SSH должна существовать в RouterOS. VLAN — стандартные tunnel-атрибуты.", []Attribute{{"Mikrotik-Group", 14988, 3, "string"}, {"Mikrotik-Rate-Limit", 14988, 8, "string"}}},
 	{"cisco", "Cisco IOS / IOS XE", "SSH: Cisco-AVPair shell:priv-lvl. Поддержка зависит от семейства и настроек AAA.", []Attribute{{"Cisco-AVPair", 9, 1, "string"}}},

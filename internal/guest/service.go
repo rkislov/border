@@ -25,6 +25,7 @@ import (
 )
 
 type Service struct {
+	CaptiveRedirect   func(context.Context, string, string, string) (string, error)
 	Activate          func(context.Context, store.GuestAuthorization, int) (bool, error)
 	oidcFlows         map[string]oidcFlow
 	oidcStarts        map[string]time.Time
@@ -377,8 +378,8 @@ func (s *Service) Confirm(ctx context.Context, id, code string) (Grant, error) {
 	var phoneCipher, digest, phoneHash string
 	var expires, verified int64
 	var attempts int
-	q := "SELECT c.nas,c.mac,c.phone_cipher,c.phone_hash,c.code_digest,c.expires_at,c.attempts,c.verified_at,c.channel,c.domain_id,c.policy_id,c.policy_hash FROM guest_challenges c JOIN nas n ON n.address=c.nas JOIN guest_policy p ON p.id=1 WHERE c.id=? AND p.enabled=1 AND n.portal_enabled=1"
-	if err = tx.QueryRowContext(ctx, s.Store.SQL(q), id).Scan(&g.NAS, &g.MAC, &phoneCipher, &phoneHash, &digest, &expires, &attempts, &verified, &g.Method, &g.DomainID, &g.PolicyID, &g.PolicyHash); err != nil {
+	q := "SELECT c.nas,c.mac,c.phone_cipher,c.phone_hash,c.code_digest,c.expires_at,c.attempts,c.verified_at,c.channel,c.domain_id,c.policy_id,c.policy_hash,c.session_id FROM guest_challenges c JOIN nas n ON n.address=c.nas JOIN guest_policy p ON p.id=1 WHERE c.id=? AND p.enabled=1 AND n.portal_enabled=1"
+	if err = tx.QueryRowContext(ctx, s.Store.SQL(q), id).Scan(&g.NAS, &g.MAC, &phoneCipher, &phoneHash, &digest, &expires, &attempts, &verified, &g.Method, &g.DomainID, &g.PolicyID, &g.PolicyHash, &g.NASSessionID); err != nil {
 		return Grant{}, fmt.Errorf("запрос не найден или доступ выключен")
 	}
 	now := time.Now().Unix()

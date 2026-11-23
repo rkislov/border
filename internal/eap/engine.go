@@ -403,15 +403,17 @@ func (e *Engine) step(ctx context.Context, s *session, message []byte) Reply {
 			defer e.wg.Done()
 			conn := tls.Server(s.conn, s.config)
 			err := conn.HandshakeContext(sessionCtx)
-			result := &tlsResult{err: err}
+			result := &tlsResult{err: err, failureReason: "TLS handshake failed"}
 			if err == nil {
 				result.state = conn.ConnectionState()
 				label := "client EAP encryption"
 				if s.tunnel != nil && s.tunnel.Method == TTLS {
 					label = "ttls keying material"
 				}
+				result.failureReason = "TLS key export failed"
 				result.key, result.err = result.state.ExportKeyingMaterial(label, nil, 128)
 				if result.err == nil && s.tunnel != nil {
+					result.failureReason = "inner authentication rejected"
 					result.authorization, result.err = s.tunnel.Authenticate(sessionCtx, conn)
 				}
 			}
@@ -448,7 +450,7 @@ func (e *Engine) step(ctx context.Context, s *session, message []byte) Reply {
 			if event.result != nil {
 				if event.result.err != nil {
 					clear(event.result.key)
-					return failed(id, "TLS handshake failed")
+					return failed(id, event.result.failureReason)
 				}
 				s.result = event.result
 			}

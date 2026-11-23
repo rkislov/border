@@ -72,7 +72,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
-	a := &app{challenges: make(map[string]adminChallenge), sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt), pki: manager, acme: acme, s: s, csrf: hex.EncodeToString(b), t: template.Must(template.ParseFS(assets, "assets/index.html", "assets/security-fields.html")), slots: make(chan struct{}, 16)}
+	a := &app{challenges: make(map[string]adminChallenge), sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt), pki: manager, acme: acme, s: s, csrf: hex.EncodeToString(b), t: template.Must(template.ParseFS(assets, "assets/index.html", "assets/security-fields.html", "assets/netcraze-fields.html")), slots: make(chan struct{}, 16)}
 	if len(guests) > 0 {
 		a.guest = guests[0]
 	}
@@ -99,6 +99,7 @@ func handler(s *store.Store, manager *pki.Manager, acme *pki.ACME, requireMTLS b
 	a.backupRoutes(mux)
 	a.fingerbankRoutes(mux)
 	a.routerOSRoutes(mux)
+	a.netcrazeRoutes(mux)
 	a.accessRoutes(mux)
 	a.notificationRoutes(mux)
 	a.guestRoutes(mux)

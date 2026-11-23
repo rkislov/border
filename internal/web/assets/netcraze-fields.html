@@ -1,0 +1,29 @@
+<form id="netcraze-form" class="panel form">
+<h2>Гостевой доступ Netcraze / Keenetic</h2>
+<p>Адаптер Chilli открывает доступ после входа в портал. Сегмент и RADIUS должны быть заранее настроены на оборудовании. Отзыв выполняется через RADIUS Disconnect.</p>
+<div class="fields">
+<label>Устройство<select name="NAS" id="netcraze-nas" required><option value="">Выберите NAS</option></select></label>
+<label>Адрес управления<input name="Address" type="url" placeholder="https://192.0.2.10:443" maxlength="255"></label>
+<label>Имя узла управления (Host / SNI)<input name="HTTPHost" placeholder="Пусто — из адреса управления" maxlength="255"><small>Если роутер требует конкретное имя веб-интерфейса.</small></label>
+<label>Служебный пользователь<input name="Username" autocomplete="off" maxlength="128"></label>
+<label>Пароль пользователя<input name="Password" type="password" autocomplete="new-password" minlength="8" maxlength="1024" placeholder="Пусто — сохранить текущий"></label>
+<label>SHA-256 сертификата NAS<input name="CertificateSHA256" maxlength="95" placeholder="Отпечаток, проверенный по доверенному каналу"></label>
+<label>Интерфейс портала<input name="Chilli" value="Chilli0" maxlength="32"></label>
+<label>Мост гостевой сети<input name="Bridge" placeholder="Bridge2" maxlength="32"></label>
+<label>Подсеть гостевой сети<input name="Subnet" placeholder="192.0.2.0/24" maxlength="32"></label>
+<label>Сетевой сегмент Border<select name="SegmentID" class="segment-select"><option value="">Выберите сегмент</option></select></label>
+<label>VLAN профиля сегмента<input name="VLAN" type="number" min="1" max="4094"><small>Должен совпадать с политикой. Chilli использует существующий мост и не переключает VLAN клиента.</small></label>
+<label>Домен портала<select name="DomainID" class="domain-select"><option value="">Портал тенанта</option></select></label>
+<label>NAS-Identifier в Chilli<input name="NASIdentifier" maxlength="128" placeholder="guest-nas"></label>
+<label>IP RADIUS-сервера<input name="RadiusServer" placeholder="192.0.2.20" maxlength="45"></label>
+<label>RADIUS Authentication, UDP<input name="AuthPort" type="number" value="1812" min="1" max="65535"></label>
+<label>RADIUS Accounting, UDP<input name="AccountingPort" type="number" value="1813" min="1" max="65535"></label>
+<label>Секрет подписи UAM<input name="UAMSecret" type="password" autocomplete="new-password" minlength="16" maxlength="128" placeholder="Пусто — сохранить текущий"><small>Отдельный секрет, совпадающий с uamsecret на NAS.</small></label>
+<label>Адрес перехода UAM<input id="netcraze-uam-url" readonly><small>Укажите этот адрес в uamserver на NAS и разрешите доступ к порталу до входа.</small></label>
+</div>
+<label><input name="TunnelHTTP" type="checkbox"> Разрешить HTTP управления внутри защищённого туннеля к частному IP</label>
+<label><input name="Enabled" type="checkbox"> Включить автоматический гостевой доступ</label>
+<p>IP NAS должен совпадать с источником RADIUS и ответов Disconnect. При смене адреса управления, пользователя или параметров доверия введите пароль заново. Сохранение изменённых настроек отзывает гостевые разрешения этого NAS.</p>
+<button class="primary">Сохранить адаптер</button> <button id="netcraze-check" type="button">Проверить сохранённые настройки</button>
+<small id="netcraze-status" role="status"></small>
+</form>
